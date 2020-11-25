@@ -145,3 +145,67 @@ The syntax is pretty simple: UUID followed by a space followed by the desired pa
   * It is not possible to add nodes within the "Bundles" direcory, unless the new node is actually within an existing bundle.
   * Adding a new file or directory within "All Bundles" will automatically create a new bundle with the correct metadata.
   * If invalid syntax is used in the metadata files, an error will be produced when saving or closing the file. (probably `EACCES`)
+
+
+## Storage
+
+```
+Volume
+├─ Metadata
+├─ Blobs
+├─ ModBlocks
+```
+
+Blobs are use provided files and they are identified by an UUID. Each blob is broken into 4 KiB blocks. The Merkell tree hash for each blob is stored in a database. Blobs are automatically deduplicated when possible.
+
+<!-- The user generated directories are stored as blobs and their format is similar to `sha1sum`'s output. (i'm unsure about this) -->
+
+If a blob is used only once, writes are done directly to the blob. Otherwise, modblocks are used. The FS will copy the block that is beign modified and then write the changes to this modblock. The fact that changes were made is annotated in the database.
+
+This weired mechanism (hopefully) helps with file streaming.
+
+The modblocks are "incorporated" when:
+
+  * A blob is used by a single file.
+  * When a third for the blocks are modified. (in this case a new blob is created)
+
+### Tables (for each volume)
+
+Bundles:
+
+  * Bundle UUID
+  * Name
+  * SyncStatus
+  * ConflictFrom - (if there is a sync conflict, the blob is "copied" with a new UUID)
+
+Files:
+
+  * File UUID
+  * Bundle UUID
+  * Path
+  * Modification Date
+  * Base Blob UUID
+  * Content Merkel Tree Hash - (if available)
+  * Size
+
+Blobs:
+
+  * Blob UUID
+  * Size
+  * Status - ready, incorporation modblocks, downloading, etc.
+
+BlobBlocks:
+
+  * Blob UUID
+  * BlockNumber
+  * Hash
+
+TODO: add merkel tree table
+
+ModBlocks:
+
+  * ModBlock UUID
+  * File UUID
+  * BlockNumber
+
+## Syncing
