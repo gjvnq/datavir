@@ -1,0 +1,113 @@
+DataVir DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+UUID ::= OCTET STRING (SIZE(16))
+
+BundleBasics ::= SEQUENCE {
+	bundleUUID		UUID,
+	conflictsFrom	UUID OPTIONAL,
+	bundleName		UTF8String
+}
+
+FileKind ::= ENUMERATED {
+	fileNode			(1),
+	directoryNode		(2),
+	symbolicLinkNode	(3)
+}
+
+UnixPermission ::= SEQUENCE {
+	perm	INTEGER,
+	uid		INTEGER,
+	gid		INTEGER
+}
+
+FileInfo ::= SEQUENCE {
+	fileUUID		UUID,
+	bundleUUID 		UUID,
+	modified		GeneralizedTime,
+	baseBlobUUID	UUID,
+	treeHash		Hash,
+	kind			FileKind,
+	unixPerm		UnixPermission,
+	sizeInBytes		INTEGER,
+	path			UTF8String
+}
+
+BlobInfo ::= SEQUENCE {
+	blobUUID	UUID,
+	sizeInBytes	INTEGER,
+	-- status 		BlobStatus (?)
+}
+
+ModBlockInfo ::= SEQUENCE {
+	baseBlob	UUID,
+	fileUUID	UUID,
+	blockNum INTEGER
+}
+
+HashAlgId ::= INTEGER {
+	sha1(1),
+	merkel4kSha1(2),
+	sha256(3),
+	merkel4kSha256(4),
+	sha512(5),
+	merkel4kSha512(6),
+	sha3(7),
+	merkel4kSha3(8)
+}
+
+Hash ::= SEQUENCE {
+	hashAlg		HashAlgId,
+	hashValue	OCTET STRING
+}
+
+MerkelTree ::= SEQUENCE {
+	hashAlg		HashAlgId,
+	depth		INTEGER,
+	hashes		SEQUENCE OF OCTET STRING
+}
+
+MerkelProof ::= SEQUENCE {
+	hashAlg		HashAlgId,
+	path		BIT STRING,
+	hashes		SEQUENCE OF OCTET STRING
+}
+
+BlockTransmission ::= SEQUENCE {
+	rootHash	Hash,
+	blockNum	INTEGER,
+	totBlocks	INTEGER,
+	data		OCTET STRING
+}
+
+PurchaseOrder ::= SEQUENCE {
+dateOfOrder DATE,
+customer    CustomerInfo,
+items       ListOfItems
+}
+
+CustomerInfo ::= SEQUENCE {
+companyName    VisibleString (SIZE (3..50)),
+billingAddress Address,
+contactPhone   NumericString (SIZE (7..12))
+}
+
+Address::= SEQUENCE {
+street  VisibleString (SIZE (5 .. 50)) OPTIONAL,
+city    VisibleString (SIZE (2..30)),
+state   VisibleString (SIZE(2) ^ FROM ("A".."Z")),
+zipCode NumericString (SIZE(5 | 9))
+}
+
+ListOfItems ::= SEQUENCE (SIZE (1..100)) OF Item
+
+Item ::= SEQUENCE {
+itemCode        INTEGER (1..99999),
+color           VisibleString ("Black" | "Blue" | "Brown"),
+power           INTEGER (110 | 220),
+deliveryTime    INTEGER (8..12 | 14..19),
+quantity        INTEGER (1..1000),
+unitPrice       REAL (1.00 .. 9999.00),
+isTaxable       BOOLEAN
+}
+
+END
