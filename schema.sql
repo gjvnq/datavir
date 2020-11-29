@@ -58,3 +58,8 @@ CREATE TABLE `inode` (
 
 CREATE INDEX `inode_inode_num_idx` ON `inode` (`inode_num`);
 CREATE INDEX `inode_object_uuid_idx` ON `inode` (`object_uuid`);
+
+CREATE TABLE `app_config` (
+	`key` TEXT,
+	`value` TEXT
+);
