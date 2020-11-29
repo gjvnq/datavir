@@ -37,25 +37,23 @@ struct INodeRecord {
     path: String,
 }
 
+#[inline]
 fn i64_to_u64(num: i64) -> u64 {
-    unsafe{
-        std::mem::transmute(num)
-    }
+    unsafe { std::mem::transmute(num) }
 }
 
+#[inline]
 fn u64_to_i64(num: u64) -> i64 {
-    unsafe{
-        std::mem::transmute(num)
-    }
+    unsafe { std::mem::transmute(num) }
 }
 
 impl INodeRecord {
     fn new(num: i64, uuid: Uuid, kind: NodeType, path: String) -> Self {
-        INodeRecord{
+        INodeRecord {
             inode_num: i64_to_u64(num),
             object_uuid: uuid,
             object_type: kind,
-            path: path
+            path: path,
         }
     }
 }
@@ -67,26 +65,22 @@ fn set_inode_counter(conn: Connection) -> Result<(), rusqlite::Error> {
         log::error!("Failed to set INODE_NEXT: {:?}", err);
         return Err(err);
     }
-    INODE_NEXT.store(inode_num.unwrap()+1, Ordering::SeqCst);
+    INODE_NEXT.store(inode_num.unwrap() + 1, Ordering::SeqCst);
     return Ok(());
 }
 
 fn get_highest_inode(conn: Connection) -> Result<u64, rusqlite::Error> {
     // This weird code is because I want u64 but SQLite only stores i64
-    let res_max = conn.query_row(
-        "SELECT MAX(`inode_num`) FROM `inode`",
-        params![],
-        |row| Ok(row.get(0)?)
-    );
+    let res_max = conn.query_row("SELECT MAX(`inode_num`) FROM `inode`", params![], |row| {
+        Ok(row.get(0)?)
+    });
     if let Err(err) = res_max {
         log::error!("Failed to get MAX(`inode_num`): {:?}", err);
         return Err(err);
     }
-    let res_min = conn.query_row(
-        "SELECT MIN(`inode_num`) FROM `inode`",
-        params![],
-        |row| Ok(row.get(0)?)
-    );
+    let res_min = conn.query_row("SELECT MIN(`inode_num`) FROM `inode`", params![], |row| {
+        Ok(row.get(0)?)
+    });
     if let Err(err) = res_min {
         log::error!("Failed to get MIN(`inode_num`): {:?}", err);
         return Err(err);
@@ -142,11 +136,17 @@ fn inode_get(inode_num: u64, conn: Connection) -> Result<INodeRecord, rusqlite::
 fn inode_set_path(inode_num: u64, path: &String, conn: Connection) -> Result<(), rusqlite::Error> {
     let res = conn.execute(
         "UPDATE `inode` SET `path` = ?1 WHERE `inode_num` = ?2",
-        params![path, u64_to_i64(inode_num)]);
+        params![path, u64_to_i64(inode_num)],
+    );
     match res {
         Ok(_) => Ok(()),
         Err(err) => {
-            log::error!("Failed to set inode {} path to '{}' from database: {:?}", inode_num, path, err);
+            log::error!(
+                "Failed to set inode {} path to '{}' from database: {:?}",
+                inode_num,
+                path,
+                err
+            );
             Err(err)
         }
     }
@@ -156,11 +156,16 @@ fn inode_set_path(inode_num: u64, path: &String, conn: Connection) -> Result<(),
 fn inode_del(inode_num: u64, conn: Connection) -> Result<(), rusqlite::Error> {
     let res = conn.execute(
         "DELETE FROM `inode` WHERE `inode_num` = ?1",
-        params![u64_to_i64(inode_num)]);
+        params![u64_to_i64(inode_num)],
+    );
     match res {
         Ok(_) => Ok(()),
         Err(err) => {
-            log::error!("Failed to delete inode {} from database: {:?}", inode_num, err);
+            log::error!(
+                "Failed to delete inode {} from database: {:?}",
+                inode_num,
+                err
+            );
             Err(err)
         }
     }
