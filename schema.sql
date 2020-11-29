@@ -2,6 +2,7 @@ CREATE TABLE `bundles` (
 	`bundle_uuid` CHAR(36),
 	`conflicts_from` CHAR(36)
 	`sync_status` INT,
+	`modified` TIMESTAMP,
 	`name` VARCHAR(250),
 );
 
@@ -47,3 +48,13 @@ CREATE TABLE `basic_metadata` (
 
 CREATE INDEX `basic_metadata_subject_uuid_idx` ON `basic_metadata` (`subject_uuid`);
 CREATE INDEX `basic_metadata_predicate_idx` ON `basic_metadata` (`predicate`);
+
+CREATE TABLE `inode` (
+	`inode_num` INTEGER PRIMARY KEY, /* the value is actually u64 but may be preented as i64 */
+	`object_uuid` CHAR(36),
+	`object_type` VARCHAR(20),
+	`path` VARCHAR(250)
+) WITHOUT ROWID;
+
+CREATE INDEX `inode_inode_num_idx` ON `inode` (`inode_num`);
+CREATE INDEX `inode_object_uuid_idx` ON `inode` (`object_uuid`);

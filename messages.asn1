@@ -23,7 +23,7 @@ UnixPermission ::= SEQUENCE {
 FileInfo ::= SEQUENCE {
 	fileUUID		UUID,
 	bundleUUID 		UUID,
-	modified		GeneralizedTime,
+	modified		DATE-TIME,
 	baseBlobUUID	UUID,
 	treeHash		Hash,
 	kind			FileKind,

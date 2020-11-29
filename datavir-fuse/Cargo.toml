@@ -1,0 +1,19 @@
+[package]
+name = "datavir-fuse"
+version = "0.1.0"
+authors = ["G. Queiroz <gabrieljvnq@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+fern = "0.6.0"
+fuser = "0.6.0"
+uuid = { version = "0.8", features = ["serde", "v4", "v5"] }
+serde = { version = "1.0.117", features = ["derive"] }
+toml = "0.5"
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4.11"
+rusqlite = { version = "0.24.1", features = ["backup", "blob", "chrono", "url", "hooks", "uuid"] }
+# rusqlite = { git = "https://github.com/rusqlite/rusqlite", rev = "b0ade73", features = ["backup", "blob", "chrono", "url", "hooks", "uuid"] }
