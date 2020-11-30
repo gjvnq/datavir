@@ -1,12 +1,8 @@
 use crate::node_type::NodeType;
-use log;
-use rusqlite::{params, Transaction};
+use crate::prelude::*;
+use rusqlite::params;
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
-
-#[allow(unused_imports)]
-use log::{debug, info, trace, warn, error};
-
 
 #[allow(dead_code)]
 const INODE_ROOT: u64 = 1;
@@ -123,7 +119,7 @@ fn inode_add(obj: &dyn INodeRegisterable, tx: Transaction) -> Result<(), rusqlit
         Ok(_) => {
             trace!("-{}(obj={:?}) -> Ok", stringify!(inode_add), obj);
             Ok(())
-        },
+        }
         Err(err) => {
             error!("Failed to add new inode to database: {:?}", err);
             trace!("-{}(obj={:?}) -> {:?}", stringify!(inode_add), obj, err);
@@ -142,12 +138,22 @@ fn inode_get(inode_num: u64, tx: Transaction) -> Result<INodeRecord, rusqlite::E
     );
     match res {
         Ok(v) => {
-            trace!("-{}(inode_num={}) -> {:?}", stringify!(inode_get), inode_num, v);
+            trace!(
+                "-{}(inode_num={}) -> {:?}",
+                stringify!(inode_get),
+                inode_num,
+                v
+            );
             Ok(v)
-        },
+        }
         Err(err) => {
             error!("Failed to get inode {} from database: {:?}", inode_num, err);
-            trace!("-{}(inode_num={}) -> {:?}", stringify!(inode_get), inode_num, err);
+            trace!(
+                "-{}(inode_num={}) -> {:?}",
+                stringify!(inode_get),
+                inode_num,
+                err
+            );
             Err(err)
         }
     }
@@ -155,24 +161,38 @@ fn inode_get(inode_num: u64, tx: Transaction) -> Result<INodeRecord, rusqlite::E
 
 #[allow(dead_code)]
 fn inode_set_path(inode_num: u64, path: &String, tx: Transaction) -> Result<(), rusqlite::Error> {
-    trace!("+{}(inode_num={},path={:?})", stringify!(inode_set_path), inode_num, path);
+    trace!(
+        "+{}(inode_num={},path={:?})",
+        stringify!(inode_set_path),
+        inode_num,
+        path
+    );
     let res = tx.execute(
         "UPDATE `inode` SET `path` = ?1 WHERE `inode_num` = ?2",
         params![path, u64_to_i64(inode_num)],
     );
     match res {
         Ok(_) => {
-            trace!("+{}(inode_num={},path={}) -> Ok", stringify!(inode_set_path), inode_num, path);
+            trace!(
+                "+{}(inode_num={},path={}) -> Ok",
+                stringify!(inode_set_path),
+                inode_num,
+                path
+            );
             Ok(())
-        },
+        }
         Err(err) => {
             error!(
                 "Failed to set inode {} path to '{}' from database: {:?}",
+                inode_num, path, err
+            );
+            trace!(
+                "-{}(inode_num={},path={}) -> {:?}",
+                stringify!(inode_set_path),
                 inode_num,
                 path,
                 err
             );
-            trace!("-{}(inode_num={},path={}) -> {:?}", stringify!(inode_set_path), inode_num, path, err);
             Err(err)
         }
     }
@@ -189,14 +209,18 @@ fn inode_del(inode_num: u64, tx: Transaction) -> Result<(), rusqlite::Error> {
         Ok(_) => {
             trace!("-{}(inode_num={}) -> Ok", stringify!(inode_del), inode_num);
             Ok(())
-        },
+        }
         Err(err) => {
             error!(
                 "Failed to delete inode {} from database: {:?}",
+                inode_num, err
+            );
+            trace!(
+                "-{}(inode_num={}) -> {:?}",
+                stringify!(inode_del),
                 inode_num,
                 err
             );
-            trace!("-{}(inode_num={}) -> {:?}", stringify!(inode_del), inode_num, err);
             Err(err)
         }
     }

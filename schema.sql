@@ -1,9 +1,9 @@
 CREATE TABLE `bundles` (
 	`bundle_uuid` CHAR(36),
-	`conflicts_from` CHAR(36)
+	`conflicts_from` CHAR(36),
 	`sync_status` INT,
 	`modified` TIMESTAMP,
-	`name` VARCHAR(250),
+	`name` VARCHAR(250)
 );
 
 CREATE INDEX `bundles_sync_status_idx` ON `bundles` (`sync_status`);
@@ -17,7 +17,7 @@ CREATE TABLE `files` (
 	`kind` CHAR(1), /* File, Directory, symbolic Link */
 	`unix_perm` INTEGER,
 	`size` INTEGER,
-	`path` MEDIUMTEXT
+	`path` VARCHAR(250)
 );
 
 CREATE INDEX `files_bundle_uuid_idx` ON `files` (`bundle_uuid`);

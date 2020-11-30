@@ -3,15 +3,19 @@ mod bundle_file;
 mod hacks;
 mod inode_record;
 mod node_type;
+mod prelude;
+mod schema;
 
+use crate::prelude::*;
+use crate::schema::upgrade_schema;
+use clap::{App, Arg};
+use fern::colors::{Color, ColoredLevelConfig};
+use rusqlite::config::DbConfig;
 use std::fs;
 use std::path::Path;
-use clap::{Arg, App};
-use fern::colors::{Color, ColoredLevelConfig};
-use  rusqlite::config::DbConfig;
 
 #[allow(unused_imports)]
-use log::{debug, info, trace, warn, error};
+use log::{debug, error, info, trace, warn};
 
 fn setup_logging(verbosity: u64) -> Result<(), fern::InitError> {
     let colors = ColoredLevelConfig::new()
@@ -82,9 +86,17 @@ fn setup_logging(verbosity: u64) -> Result<(), fern::InitError> {
 }
 
 fn ensure_dir_exists(what: &str, path: &Path) -> bool {
-    trace!("+{}:(what={:?}, path={:?})", stringify!(ensure_dir_exists), what, path);
+    trace!(
+        "+{}:(what={:?}, path={:?})",
+        stringify!(ensure_dir_exists),
+        what,
+        path
+    );
     if !path.exists() {
-        debug!("{} does not exist, will try to make it if parent exists", what);
+        debug!(
+            "{} does not exist, will try to make it if parent exists",
+            what
+        );
         let parent = path.parent();
         debug!("{}.parent() = {:?}", what, parent);
         if let Some(parent) = parent {
@@ -92,35 +104,71 @@ fn ensure_dir_exists(what: &str, path: &Path) -> bool {
                 match fs::create_dir(path) {
                     Ok(_) => {
                         debug!("Created {}", what);
-                        trace!("-{}:(what={:?}, path={:?}) -> {:?}", stringify!(ensure_dir_exists), what, path, true);
-                        return true
-                    },
+                        trace!(
+                            "-{}:(what={:?}, path={:?}) -> {:?}",
+                            stringify!(ensure_dir_exists),
+                            what,
+                            path,
+                            true
+                        );
+                        return true;
+                    }
                     Err(err) => {
                         error!("Failed to make {}: {:?}", what, err);
-                        trace!("-{}:(what={:?}, path={:?}) -> {:?}", stringify!(ensure_dir_exists), what, path, false);
-                        return false
+                        trace!(
+                            "-{}:(what={:?}, path={:?}) -> {:?}",
+                            stringify!(ensure_dir_exists),
+                            what,
+                            path,
+                            false
+                        );
+                        return false;
                     }
                 }
             } else {
                 debug!("{}'s parent does not exist", what);
                 error!("{} {:?} does not exists", what, path);
-                trace!("-{}:(what={:?}, path={:?}) -> {:?}", stringify!(ensure_dir_exists), what, path, false);
-                return false
+                trace!(
+                    "-{}:(what={:?}, path={:?}) -> {:?}",
+                    stringify!(ensure_dir_exists),
+                    what,
+                    path,
+                    false
+                );
+                return false;
             }
         } else {
             error!("Failed to get {}'s parent", what);
             error!("{} {:?} does not exists", what, path);
-            trace!("-{}:(what={:?}, path={:?}) -> {:?}", stringify!(ensure_dir_exists), what, path, false);
-            return false
+            trace!(
+                "-{}:(what={:?}, path={:?}) -> {:?}",
+                stringify!(ensure_dir_exists),
+                what,
+                path,
+                false
+            );
+            return false;
         }
     } else if !path.is_dir() {
         error!("{:?} is not a directory", path);
-        trace!("-{}:(what={:?}, path={:?}) -> {:?}", stringify!(ensure_dir_exists), what, path, false);
-        return false
+        trace!(
+            "-{}:(what={:?}, path={:?}) -> {:?}",
+            stringify!(ensure_dir_exists),
+            what,
+            path,
+            false
+        );
+        return false;
     } else {
         debug!("Great! {} exists and is a folder", what);
-        trace!("-{}:(what={:?}, path={:?}) -> {:?}", stringify!(ensure_dir_exists), what, path, true);
-        return true
+        trace!(
+            "-{}:(what={:?}, path={:?}) -> {:?}",
+            stringify!(ensure_dir_exists),
+            what,
+            path,
+            true
+        );
+        return true;
     }
 }
 
@@ -128,14 +176,18 @@ fn main() {
     let cmd_arguments = App::new("datavir")
         .author("Gabriel Queiroz <gabrieljvnq@gmail.com>")
         .about("A document organizer that supports rich metadata, filters and subfiles")
-        .arg(Arg::with_name("DATA_DIR")
-            .help("Sets the the directory that will hold the actual data")
-            .required(true)
-            .index(1))
-        .arg(Arg::with_name("MOUNT_POINT")
-            .help("Sets the the mount point for the file system")
-            .required(true)
-            .index(2))
+        .arg(
+            Arg::with_name("DATA_DIR")
+                .help("Sets the the directory that will hold the actual data")
+                .required(true)
+                .index(1),
+        )
+        .arg(
+            Arg::with_name("MOUNT_POINT")
+                .help("Sets the the mount point for the file system")
+                .required(true)
+                .index(2),
+        )
         .arg(
             Arg::with_name("verbose")
                 .short("v")
@@ -153,12 +205,14 @@ fn main() {
     debug!("DEBUG output enabled.");
     trace!("TRACE output enabled.");
 
+    // TODO: move this code to somewhere more appropriate
+
     // Ensure DATA_DIR exists and is a folder
     let data_dir: &str = cmd_arguments.value_of("DATA_DIR").unwrap();
     debug!("DATA_DIR = {:?}", data_dir);
     let data_dir = Path::new(data_dir);
     if !ensure_dir_exists("DATA_DIR", data_dir) {
-        return
+        return;
     }
 
     // Ensure MOUNT_POINT exists and is a folder
@@ -166,7 +220,7 @@ fn main() {
     debug!("MOUNT_POINT = {:?}", mount_dir);
     let mount_dir = Path::new(mount_dir);
     if !ensure_dir_exists("MOUNT_POINT", mount_dir) {
-        return
+        return;
     }
 
     // FUSE doesn't like when the mount point is not empty
@@ -175,7 +229,7 @@ fn main() {
         let is_empty = dir_listing.next().is_none();
         if !is_empty {
             error!("Mount point {:?} is not is_empty", mount_dir);
-            return
+            return;
         }
     } else {
         error!("Failed to get contents of {:?}", mount_dir);
@@ -184,44 +238,56 @@ fn main() {
     // Open database
     let mut db_path = data_dir.to_path_buf();
     db_path.push("datavir.sqlite");
-    let db_conn = match rusqlite::Connection::open(db_path.as_path()) {
+    let db_conn = match Connection::open(db_path.as_path()) {
         Ok(v) => v,
         Err(err) => {
             error!("Failed to open database at {:?}: {:?}", db_path, err);
-            return
+            return;
         }
     };
     info!("Opened database");
     // We don't need foreign keys
     if let Err(err) = db_conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY, false) {
         error!("Failed to set SQLITE_DBCONFIG_ENABLE_FKEY: {:?}", err);
-        return
+        return;
     }
     // We do need triggers
     if let Err(err) = db_conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER, true) {
         error!("Failed to set SQLITE_DBCONFIG_ENABLE_TRIGGER: {:?}", err);
-        return
+        return;
     }
     // We don't use full text search
-    if let Err(err) = db_conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER, false) {
-        error!("Failed to set SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER: {:?}", err);
-        return
+    if let Err(err) = db_conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER, false)
+    {
+        error!(
+            "Failed to set SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER: {:?}",
+            err
+        );
+        return;
     }
     // Enable checkpoints (yes, it is `false` to enable)
     if let Err(err) = db_conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false) {
         error!("Failed to set SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE: {:?}", err);
-        return
+        return;
     }
     // Enable "stable" query times
     if let Err(err) = db_conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG, true) {
         error!("Failed to set SQLITE_DBCONFIG_ENABLE_QPSG: {:?}", err);
-        return
+        return;
     }
     // Add some protection against mistakes
     if let Err(err) = db_conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true) {
         error!("Failed to set SQLITE_DBCONFIG_DEFENSIVE: {:?}", err);
-        return
+        return;
     }
     info!("Finished setting database params");
-    
+
+    // Create tables
+    upgrade_schema(&db_conn);
+
+    // Reserve some inodes if not already
+
+    // Get inode counter
+
+    // Mount FS
 }
