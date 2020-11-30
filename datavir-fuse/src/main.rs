@@ -8,6 +8,7 @@ use std::fs;
 use std::path::Path;
 use clap::{Arg, App};
 use fern::colors::{Color, ColoredLevelConfig};
+use  rusqlite::config::DbConfig;
 
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn, error};
@@ -181,7 +182,46 @@ fn main() {
     }
 
     // Open database
-    
-    
+    let mut db_path = data_dir.to_path_buf();
+    db_path.push("datavir.sqlite");
+    let db_conn = match rusqlite::Connection::open(db_path.as_path()) {
+        Ok(v) => v,
+        Err(err) => {
+            error!("Failed to open database at {:?}: {:?}", db_path, err);
+            return
+        }
+    };
+    info!("Opened database");
+    // We don't need foreign keys
+    if let Err(err) = db_conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY, false) {
+        error!("Failed to set SQLITE_DBCONFIG_ENABLE_FKEY: {:?}", err);
+        return
+    }
+    // We do need triggers
+    if let Err(err) = db_conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER, true) {
+        error!("Failed to set SQLITE_DBCONFIG_ENABLE_TRIGGER: {:?}", err);
+        return
+    }
+    // We don't use full text search
+    if let Err(err) = db_conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER, false) {
+        error!("Failed to set SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER: {:?}", err);
+        return
+    }
+    // Enable checkpoints (yes, it is `false` to enable)
+    if let Err(err) = db_conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false) {
+        error!("Failed to set SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE: {:?}", err);
+        return
+    }
+    // Enable "stable" query times
+    if let Err(err) = db_conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG, true) {
+        error!("Failed to set SQLITE_DBCONFIG_ENABLE_QPSG: {:?}", err);
+        return
+    }
+    // Add some protection against mistakes
+    if let Err(err) = db_conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true) {
+        error!("Failed to set SQLITE_DBCONFIG_DEFENSIVE: {:?}", err);
+        return
+    }
+    info!("Finished setting database params");
     
 }

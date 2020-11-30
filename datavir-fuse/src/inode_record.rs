@@ -1,6 +1,6 @@
 use crate::node_type::NodeType;
 use log;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Transaction};
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 
@@ -62,9 +62,9 @@ impl INodeRecord {
 }
 
 #[allow(dead_code)]
-fn set_inode_counter(conn: Connection) -> Result<(), rusqlite::Error> {
+fn set_inode_counter(tx: Transaction) -> Result<(), rusqlite::Error> {
     trace!("+{}", stringify!(set_inode_counter));
-    let inode_num = get_highest_inode(conn);
+    let inode_num = get_highest_inode(tx);
     if let Err(err) = inode_num {
         error!("Failed to set INODE_NEXT: {:?}", err);
         trace!("-{} -> {:?}", stringify!(set_inode_counter), err);
@@ -77,17 +77,17 @@ fn set_inode_counter(conn: Connection) -> Result<(), rusqlite::Error> {
     return Ok(());
 }
 
-fn get_highest_inode(conn: Connection) -> Result<u64, rusqlite::Error> {
+fn get_highest_inode(tx: Transaction) -> Result<u64, rusqlite::Error> {
     trace!("+{}", stringify!(get_highest_inode));
     // This weird code is because I want u64 but SQLite only stores i64
-    let res_max = conn.query_row("SELECT MAX(`inode_num`) FROM `inode`", params![], |row| {
+    let res_max = tx.query_row("SELECT MAX(`inode_num`) FROM `inode`", params![], |row| {
         Ok(row.get(0)?)
     });
     if let Err(err) = res_max {
         error!("Failed to get MAX(`inode_num`): {:?}", err);
         return Err(err);
     }
-    let res_min = conn.query_row("SELECT MIN(`inode_num`) FROM `inode`", params![], |row| {
+    let res_min = tx.query_row("SELECT MIN(`inode_num`) FROM `inode`", params![], |row| {
         Ok(row.get(0)?)
     });
     if let Err(err) = res_min {
@@ -107,10 +107,10 @@ fn get_highest_inode(conn: Connection) -> Result<u64, rusqlite::Error> {
 }
 
 #[allow(dead_code)]
-fn inode_add(obj: &dyn INodeRegisterable, conn: Connection) -> Result<(), rusqlite::Error> {
+fn inode_add(obj: &dyn INodeRegisterable, tx: Transaction) -> Result<(), rusqlite::Error> {
     trace!("+{}(obj={:?})", stringify!(inode_add), obj);
     let inode_num = INODE_NEXT.fetch_add(1, Ordering::SeqCst);
-    let res = conn.execute(
+    let res = tx.execute(
         "INSERT INTO `inode` (`inode_num`, `object_uuid`, `object_type`, `path`) (?1, ?2, ?3, ?4)",
         params![
             u64_to_i64(inode_num),
@@ -133,9 +133,9 @@ fn inode_add(obj: &dyn INodeRegisterable, conn: Connection) -> Result<(), rusqli
 }
 
 #[allow(dead_code)]
-fn inode_get(inode_num: u64, conn: Connection) -> Result<INodeRecord, rusqlite::Error> {
+fn inode_get(inode_num: u64, tx: Transaction) -> Result<INodeRecord, rusqlite::Error> {
     trace!("+{}(inode_num={})", stringify!(inode_get), inode_num);
-    let res = conn.query_row(
+    let res = tx.query_row(
         "SELECT `inode_num`, `object_uuid`, `object_type`, `path` FROM `inode` WHERE `inode_num` = ?1",
         params![u64_to_i64(inode_num)],
         |row| Ok(INodeRecord::new(row.get(0)?, row.get(1)?, row.get(2)?,row.get(3)?))
@@ -154,9 +154,9 @@ fn inode_get(inode_num: u64, conn: Connection) -> Result<INodeRecord, rusqlite::
 }
 
 #[allow(dead_code)]
-fn inode_set_path(inode_num: u64, path: &String, conn: Connection) -> Result<(), rusqlite::Error> {
+fn inode_set_path(inode_num: u64, path: &String, tx: Transaction) -> Result<(), rusqlite::Error> {
     trace!("+{}(inode_num={},path={:?})", stringify!(inode_set_path), inode_num, path);
-    let res = conn.execute(
+    let res = tx.execute(
         "UPDATE `inode` SET `path` = ?1 WHERE `inode_num` = ?2",
         params![path, u64_to_i64(inode_num)],
     );
@@ -179,9 +179,9 @@ fn inode_set_path(inode_num: u64, path: &String, conn: Connection) -> Result<(),
 }
 
 #[allow(dead_code)]
-fn inode_del(inode_num: u64, conn: Connection) -> Result<(), rusqlite::Error> {
+fn inode_del(inode_num: u64, tx: Transaction) -> Result<(), rusqlite::Error> {
     trace!("+{}(inode_num={})", stringify!(inode_del), inode_num);
-    let res = conn.execute(
+    let res = tx.execute(
         "DELETE FROM `inode` WHERE `inode_num` = ?1",
         params![u64_to_i64(inode_num)],
     );
