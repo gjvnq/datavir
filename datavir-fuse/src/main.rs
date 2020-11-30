@@ -41,12 +41,16 @@ fn setup_logging(verbosity: u64) -> Result<(), fern::InitError> {
     let file_config = fern::Dispatch::new()
         .level(file_level)
         .format(move |out, message, record| {
+            let mut module_or_target = record.module_path().unwrap_or(record.target());
+            if module_or_target.starts_with("datavir_fuse::") {
+                module_or_target = "datavir_fuse"
+            }
             out.finish(format_args!(
-                "{date}[{level: <5}][{target}][{file}:{line}] {message}",
+                "{date}[{level: <5}][{target}][{file}:{line: <4}] {message}",
                 date = chrono::Utc::now().format("[%Y-%m-%dT%H:%M:%SZ]"),
                 file = record.file().unwrap_or("?"),
                 line = record.line().unwrap_or(0),
-                target = record.target(),
+                target = module_or_target,
                 level = colors.color(record.level()),
                 message = message
             ))
@@ -56,7 +60,11 @@ fn setup_logging(verbosity: u64) -> Result<(), fern::InitError> {
     let stdout_config = fern::Dispatch::new()
         .level(stdout_level)
         .format(move |out, message, record| {
-            if record.target() == "datavir_fuse" {
+            let mut module_or_target = record.module_path().unwrap_or(record.target());
+            if module_or_target.starts_with("datavir_fuse::") {
+                module_or_target = "datavir_fuse"
+            }
+            if module_or_target == "datavir_fuse" {
                 out.finish(format_args!(
                     "[{date}][{level: <5}][{file}:{line: >4}] {message}",
                     date = chrono::Local::now().format("%H:%M"),
@@ -69,7 +77,7 @@ fn setup_logging(verbosity: u64) -> Result<(), fern::InitError> {
                 out.finish(format_args!(
                     "[{date}][{level: <5}][{target}] {message}",
                     date = chrono::Local::now().format("%H:%M"),
-                    target = record.target(),
+                    target = module_or_target,
                     level = colors.color(record.level()),
                     message = message
                 ))
