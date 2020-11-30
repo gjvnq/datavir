@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use rusqlite::config::DbConfig;
 
 #[derive(Debug)]
 struct SchemaItem<'a> {
@@ -174,7 +175,7 @@ fn get_schema_version(conn: &Connection) -> SQLResult<i32> {
     Ok(schema_version)
 }
 
-pub fn upgrade_schema(conn: &Connection) -> SQLResult<()> {
+fn upgrade_schema(conn: &Connection) -> SQLResult<()> {
     trace!("+{}", stringify!(upgrade_schema));
     // Ensure app_config table exists
     let res = conn.execute(
@@ -204,4 +205,82 @@ pub fn upgrade_schema(conn: &Connection) -> SQLResult<()> {
     }
     trace!("-{} -> Ok", stringify!(upgrade_schema));
     Ok(())
+}
+
+fn set_conn_options(conn: &Connection) -> SQLResult<()> {
+    trace!("+{}", stringify!(set_conn_options));
+    let opts = vec![
+        // We don't need foreign keys
+        (
+            DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY,
+            "SQLITE_DBCONFIG_ENABLE_FKEY",
+            false,
+        ),
+        // We do need triggers
+        (
+            DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER,
+            "SQLITE_DBCONFIG_ENABLE_TRIGGER",
+            true,
+        ),
+        // We don't use full text search
+        (
+            DbConfig::SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER,
+            "SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER",
+            false,
+        ),
+        // Enable checkpoints (yes, it is `false` to enable)
+        (
+            DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+            "SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE",
+            false,
+        ),
+        // Enable "stable" query times
+        (
+            DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG,
+            "SQLITE_DBCONFIG_ENABLE_QPSG",
+            true,
+        ),
+        // Add some protection against mistakes
+        (
+            DbConfig::SQLITE_DBCONFIG_DEFENSIVE,
+            "SQLITE_DBCONFIG_DEFENSIVE",
+            true,
+        ),
+    ];
+    for opt in opts {
+        debug!("Setting {} to {:?}", opt.1, opt.2);
+        if let Err(err) = conn.set_db_config(opt.0, opt.2) {
+            error!("Failed to set {}: {:?}", opt.1, err);
+            trace!("-{} -> {:?}", stringify!(set_conn_options), err);
+            return Err(err);
+        }
+    }
+    trace!("-{} -> Ok", stringify!(set_conn_options));
+    Ok(())
+}
+
+pub fn open_database(db_path: &Path) -> SQLResult<Connection> {
+    trace!("+{}(db_path={:?})", stringify!(open_database), db_path);
+    match Connection::open(db_path) {
+        Ok(conn) => {
+            set_conn_options(&conn)?;
+            upgrade_schema(&conn)?;
+            trace!(
+                "-{}(db_path={:?}) -> Ok",
+                stringify!(open_database),
+                db_path
+            );
+            return Ok(conn);
+        }
+        Err(err) => {
+            error!("Failed to open database at {:?}: {:?}", db_path, err);
+            trace!(
+                "-{}(db_path={:?}) -> {:?}",
+                stringify!(open_database),
+                db_path,
+                err
+            );
+            return Err(err);
+        }
+    }
 }
