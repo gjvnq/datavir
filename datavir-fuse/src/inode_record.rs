@@ -19,7 +19,8 @@ const INODE_ALL_BUNDLES_DIR: u64 = 6;
 #[allow(dead_code)]
 const INODE_BUNDLES_DIR: u64 = 7;
 
-const INODE_MIN: u64 = 64;
+pub const INODE_MIN: u64 = 64;
+pub const INODE_MIN_I64: i64 = 64;
 static INODE_NEXT: AtomicU64 = AtomicU64::new(INODE_MIN);
 
 pub trait INodeRegisterable: std::fmt::Debug {
