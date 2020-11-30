@@ -11,6 +11,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = "2.33.3"
 fern = { version = "0.6.0", features = ["colored"] }
 fuser = "0.6.0"
+libc = "0.2.51"
 log = "0.4.11"
 rusqlite = { version = "0.24.1", features = ["backup", "blob", "chrono", "url", "hooks", "uuid"] }
 serde = { version = "1.0.117", features = ["derive"] }

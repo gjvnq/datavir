@@ -1,4 +1,5 @@
-use crate::inode_record::INODE_MIN_I64;
+use crate::inode_record::set_inode_counter;
+use crate::inode_record::INODE_MIN;
 use crate::prelude::*;
 use rusqlite::config::DbConfig;
 
@@ -180,7 +181,7 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
     trace!("+{}", stringify!(reserve_inodes));
     let res: rusqlite::Result<i32> = conn.query_row(
         "SELECT COUNT() FROM `inode` WHERE `inode_num` < ?1 AND `object_type` != 'S'",
-        params![INODE_MIN_I64],
+        params![INODE_MIN],
         |row| row.get(0),
     );
     let n_non_reserved = match res {
@@ -195,13 +196,13 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
     if n_non_reserved > 0 {
         let msg = format!(
             "There are {} non-special inodes below inode number {}. This MUST NEVER happen!",
-            n_non_reserved, INODE_MIN_I64
+            n_non_reserved, INODE_MIN
         );
         error!("{}", msg);
         panic!(msg);
     }
 
-    for inode_num in 0..INODE_MIN_I64 {
+    for inode_num in 0..INODE_MIN {
         trace!("Reverving inode number {}", inode_num);
         conn.execute(
             "INSERT OR REPLACE INTO `inode` (`inode_num`, `object_uuid`, `object_type`, `path`) VALUES \
@@ -246,6 +247,8 @@ fn upgrade_schema(conn: &Connection) -> SQLResult<()> {
 
     // Ensure certain inode numbers are reserved
     reserve_inodes(conn)?;
+    // Adjust inode counter
+    set_inode_counter(conn)?;
 
     trace!("-{} -> Ok", stringify!(upgrade_schema));
     Ok(())

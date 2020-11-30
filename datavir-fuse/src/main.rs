@@ -1,11 +1,13 @@
 mod bundle;
 mod bundle_file;
+mod datavir_fs;
 mod hacks;
 mod inode_record;
 mod node_type;
 mod prelude;
 mod schema;
 
+use crate::datavir_fs::DataVirFS;
 use crate::prelude::*;
 use crate::schema::open_database;
 use clap::{App, Arg};
@@ -87,94 +89,7 @@ fn setup_logging(verbosity: u64) -> Result<(), fern::InitError> {
     Ok(())
 }
 
-fn ensure_dir_exists(what: &str, path: &Path) -> bool {
-    trace!(
-        "+{}:(what={:?}, path={:?})",
-        stringify!(ensure_dir_exists),
-        what,
-        path
-    );
-    if !path.exists() {
-        debug!(
-            "{} does not exist, will try to make it if parent exists",
-            what
-        );
-        let parent = path.parent();
-        debug!("{}.parent() = {:?}", what, parent);
-        if let Some(parent) = parent {
-            if parent.exists() {
-                match fs::create_dir(path) {
-                    Ok(_) => {
-                        debug!("Created {}", what);
-                        trace!(
-                            "-{}:(what={:?}, path={:?}) -> {:?}",
-                            stringify!(ensure_dir_exists),
-                            what,
-                            path,
-                            true
-                        );
-                        return true;
-                    }
-                    Err(err) => {
-                        error!("Failed to make {}: {:?}", what, err);
-                        trace!(
-                            "-{}:(what={:?}, path={:?}) -> {:?}",
-                            stringify!(ensure_dir_exists),
-                            what,
-                            path,
-                            false
-                        );
-                        return false;
-                    }
-                }
-            } else {
-                debug!("{}'s parent does not exist", what);
-                error!("{} {:?} does not exists", what, path);
-                trace!(
-                    "-{}:(what={:?}, path={:?}) -> {:?}",
-                    stringify!(ensure_dir_exists),
-                    what,
-                    path,
-                    false
-                );
-                return false;
-            }
-        } else {
-            error!("Failed to get {}'s parent", what);
-            error!("{} {:?} does not exists", what, path);
-            trace!(
-                "-{}:(what={:?}, path={:?}) -> {:?}",
-                stringify!(ensure_dir_exists),
-                what,
-                path,
-                false
-            );
-            return false;
-        }
-    } else if !path.is_dir() {
-        error!("{:?} is not a directory", path);
-        trace!(
-            "-{}:(what={:?}, path={:?}) -> {:?}",
-            stringify!(ensure_dir_exists),
-            what,
-            path,
-            false
-        );
-        return false;
-    } else {
-        debug!("Great! {} exists and is a folder", what);
-        trace!(
-            "-{}:(what={:?}, path={:?}) -> {:?}",
-            stringify!(ensure_dir_exists),
-            what,
-            path,
-            true
-        );
-        return true;
-    }
-}
-
-fn main() {
+fn real_main() -> i32 {
     let cmd_arguments = App::new("datavir")
         .author("Gabriel Queiroz <gabrieljvnq@gmail.com>")
         .about("A document organizer that supports rich metadata, filters and subfiles")
@@ -207,60 +122,31 @@ fn main() {
     debug!("DEBUG output enabled.");
     trace!("TRACE output enabled.");
 
-    // TODO: move this code to somewhere more appropriate
-
-    // Ensure DATA_DIR exists and is a folder
+    // Get data dir
     let data_dir: &str = cmd_arguments.value_of("DATA_DIR").unwrap();
     debug!("DATA_DIR = {:?}", data_dir);
     let data_dir = Path::new(data_dir);
-    if !ensure_dir_exists("DATA_DIR", data_dir) {
-        return;
-    }
 
-    // Ensure MOUNT_POINT exists and is a folder
+    // Get mount point
     let mount_dir: &str = cmd_arguments.value_of("MOUNT_POINT").unwrap();
     debug!("MOUNT_POINT = {:?}", mount_dir);
     let mount_dir = Path::new(mount_dir);
-    if !ensure_dir_exists("MOUNT_POINT", mount_dir) {
-        return;
-    }
 
-    // FUSE doesn't like when the mount point is not empty
-    let mount_dir_listing = mount_dir.read_dir();
-    if let Ok(mut dir_listing) = mount_dir_listing {
-        let is_empty = dir_listing.next().is_none();
-        if !is_empty {
-            error!("Mount point {:?} is not is_empty", mount_dir);
-            return;
-        }
-    } else {
-        error!("Failed to get contents of {:?}", mount_dir);
-    }
-
-    // Open database
-    let mut db_path = data_dir.to_path_buf();
-    db_path.push("datavir.sqlite");
-    let conn = match open_database(db_path.as_path()) {
+    // Make FS
+    let fs = match DataVirFS::new(data_dir, mount_dir) {
         Ok(v) => v,
-        Err(err) => {
-            error!("Failed to open database at {:?}: {:?}", db_path, err);
-            return;
-        }
+        Err(_) => return 1,
     };
 
-    info!("Database ready!");
-
-    // Reserve some inodes if not already
-
-    // Get inode counter
-
-    // Mount FS
-
-    match conn.close() {
+    match fs.mount() {
+        Ok(_) => 0,
         Err(err) => {
-            error!("Failed to close database: {:?}", err);
+            error!("Error on mount {:?}", err);
+            2
         }
-        _ => {}
     }
-    info!("Database closed");
+}
+
+fn main() {
+    std::process::exit(real_main());
 }

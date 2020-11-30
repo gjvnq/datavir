@@ -19,9 +19,8 @@ const INODE_ALL_BUNDLES_DIR: u64 = 6;
 #[allow(dead_code)]
 const INODE_BUNDLES_DIR: u64 = 7;
 
-pub const INODE_MIN: u64 = 64;
-pub const INODE_MIN_I64: i64 = 64;
-static INODE_NEXT: AtomicU64 = AtomicU64::new(INODE_MIN);
+pub const INODE_MIN: i64 = 64;
+static INODE_NEXT: AtomicU64 = AtomicU64::new(INODE_MIN as u64);
 
 pub trait INodeRegisterable: std::fmt::Debug {
     fn get_uuid(&self) -> Uuid;
@@ -58,10 +57,9 @@ impl INodeRecord {
     }
 }
 
-#[allow(dead_code)]
-fn set_inode_counter(tx: Transaction) -> Result<(), rusqlite::Error> {
+pub fn set_inode_counter(conn: &Connection) -> Result<(), rusqlite::Error> {
     trace!("+{}", stringify!(set_inode_counter));
-    let inode_num = get_highest_inode(tx);
+    let inode_num = get_highest_inode(conn);
     if let Err(err) = inode_num {
         error!("Failed to set INODE_NEXT: {:?}", err);
         trace!("-{} -> {:?}", stringify!(set_inode_counter), err);
@@ -74,17 +72,17 @@ fn set_inode_counter(tx: Transaction) -> Result<(), rusqlite::Error> {
     return Ok(());
 }
 
-fn get_highest_inode(tx: Transaction) -> Result<u64, rusqlite::Error> {
+fn get_highest_inode(conn: &Connection) -> Result<u64, rusqlite::Error> {
     trace!("+{}", stringify!(get_highest_inode));
     // This weird code is because I want u64 but SQLite only stores i64
-    let res_max = tx.query_row("SELECT MAX(`inode_num`) FROM `inode`", params![], |row| {
+    let res_max = conn.query_row("SELECT MAX(`inode_num`) FROM `inode`", params![], |row| {
         Ok(row.get(0)?)
     });
     if let Err(err) = res_max {
         error!("Failed to get MAX(`inode_num`): {:?}", err);
         return Err(err);
     }
-    let res_min = tx.query_row("SELECT MIN(`inode_num`) FROM `inode`", params![], |row| {
+    let res_min = conn.query_row("SELECT MIN(`inode_num`) FROM `inode`", params![], |row| {
         Ok(row.get(0)?)
     });
     if let Err(err) = res_min {
@@ -104,7 +102,7 @@ fn get_highest_inode(tx: Transaction) -> Result<u64, rusqlite::Error> {
 }
 
 #[allow(dead_code)]
-fn inode_add(obj: &dyn INodeRegisterable, tx: Transaction) -> Result<(), rusqlite::Error> {
+fn inode_add(obj: &dyn INodeRegisterable, tx: &Transaction) -> Result<(), rusqlite::Error> {
     trace!("+{}(obj={:?})", stringify!(inode_add), obj);
     let inode_num = INODE_NEXT.fetch_add(1, Ordering::SeqCst);
     let res = tx.execute(
@@ -130,7 +128,7 @@ fn inode_add(obj: &dyn INodeRegisterable, tx: Transaction) -> Result<(), rusqlit
 }
 
 #[allow(dead_code)]
-fn inode_get(inode_num: u64, tx: Transaction) -> Result<INodeRecord, rusqlite::Error> {
+fn inode_get(inode_num: u64, tx: &Transaction) -> Result<INodeRecord, rusqlite::Error> {
     trace!("+{}(inode_num={})", stringify!(inode_get), inode_num);
     let res = tx.query_row(
         "SELECT `inode_num`, `object_uuid`, `object_type`, `path` FROM `inode` WHERE `inode_num` = ?1",
@@ -161,7 +159,7 @@ fn inode_get(inode_num: u64, tx: Transaction) -> Result<INodeRecord, rusqlite::E
 }
 
 #[allow(dead_code)]
-fn inode_set_path(inode_num: u64, path: &String, tx: Transaction) -> Result<(), rusqlite::Error> {
+fn inode_set_path(inode_num: u64, path: &String, tx: &Transaction) -> Result<(), rusqlite::Error> {
     trace!(
         "+{}(inode_num={},path={:?})",
         stringify!(inode_set_path),
@@ -200,7 +198,7 @@ fn inode_set_path(inode_num: u64, path: &String, tx: Transaction) -> Result<(), 
 }
 
 #[allow(dead_code)]
-fn inode_del(inode_num: u64, tx: Transaction) -> Result<(), rusqlite::Error> {
+fn inode_del(inode_num: u64, tx: &Transaction) -> Result<(), rusqlite::Error> {
     trace!("+{}(inode_num={})", stringify!(inode_del), inode_num);
     let res = tx.execute(
         "DELETE FROM `inode` WHERE `inode_num` = ?1",
