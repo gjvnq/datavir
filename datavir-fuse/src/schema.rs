@@ -204,27 +204,25 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
         panic!(msg);
     }
 
-    // let now = SystemTime::now();
-    // let now_unix = time2sql(now)?;
-    trace!("Reverving root inode");
+    trace!("Reserving root inode");
     conn.execute(
         "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
         (1, '00000000-0000-0000-0000-000000000000', 'R', 'D', '.')",
         params![],
     )?;
-    trace!("Reverving config inode");
+    trace!("Reserving config inode");
     conn.execute(
         "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
         (2, '00000000-0000-0000-0000-000000000000', 'R', 'F', 'datavir.toml')",
         params![],
     )?;
-    trace!("Reverving socket inode");
+    trace!("Reserving socket inode");
     conn.execute(
         "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
         (3, '00000000-0000-0000-0000-000000000000', 'R', 'F', '.datavir.socket')",
         params![],
     )?;
-    trace!("Reverving status inode");
+    trace!("Reserving status inode");
     conn.execute(
         "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
         (4, '00000000-0000-0000-0000-000000000000', 'R', 'F', '.datavir.status')",
@@ -232,7 +230,7 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
     )?;
 
     for inode_num in 5..INODE_MIN {
-        trace!("Reverving inode number {}", inode_num);
+        trace!("Reserving inode number {}", inode_num);
         conn.execute(
             "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `path`) VALUES \
             (?1, '00000000-0000-0000-0000-000000000000', 'R', NULL)",

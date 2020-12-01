@@ -21,8 +21,7 @@ impl DataVirFS {
     pub fn new(data_path: &Path, mount_path: &Path) -> DVResult<Self> {
         let trace_str = format!(
             "DataVirFS::new(data_path={:?}, mount_path={:?})",
-            data_path,
-            mount_path
+            data_path, mount_path
         );
         trace!("+{}", trace_str);
         // Ensure DATA_DIR exists and is a folder

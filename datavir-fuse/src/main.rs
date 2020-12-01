@@ -41,10 +41,17 @@ fn setup_logging(verbosity: u64) -> Result<(), fern::InitError> {
             if module_or_target.starts_with("datavir_fuse::") {
                 module_or_target = "datavir_fuse"
             }
+            // TODO: better way to decide what to show in the file path
+            let file = record.file().unwrap_or("?");
+            let file = match file.len() {
+                n if n > 20 => &file[file.len() - 20..],
+                _ => &file,
+            };
+
             out.finish(format_args!(
                 "{date}[{level: <5}][{target}][{file}:{line: <4}] {message}",
                 date = chrono::Utc::now().format("[%Y-%m-%dT%H:%M:%SZ]"),
-                file = record.file().unwrap_or("?"),
+                file = file,
                 line = record.line().unwrap_or(0),
                 target = module_or_target,
                 level = colors.color(record.level()),

@@ -41,9 +41,9 @@ static mut DEFAULT_UID: u32 = 0;
 static mut DEFAULT_GID: u32 = 0;
 
 const BLOCK_SIZE: u64 = 4096;
-const DEFAULT_RDEV: u32 = 0; //no idea
-const DEFAULT_NODE_FLAGS: u32 = 0;
-const DEFAULT_NODE_PADDING: u32 = 0;
+const DEFAULT_RDEV: u32 = 0; //no idea what it does
+const DEFAULT_NODE_FLAGS: u32 = 0; //not sure what I should put here
+const DEFAULT_NODE_PADDING: u32 = 0; //no idea what it does
 
 pub trait INodeRegisterable: std::fmt::Debug {
     fn get_uuid(&self) -> Uuid;
