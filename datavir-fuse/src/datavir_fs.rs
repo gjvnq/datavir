@@ -9,6 +9,7 @@ use libc::ENOENT;
 use std::ffi::OsStr;
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub struct DataVirFS {
     conn: Connection,
     data_path: PathBuf,
@@ -19,8 +20,7 @@ pub struct DataVirFS {
 impl DataVirFS {
     pub fn new(data_path: &Path, mount_path: &Path) -> DVResult<Self> {
         let trace_str = format!(
-            "{}(data_path={:?}, mount_path={:?})",
-            stringify!(new),
+            "DataVirFS::new(data_path={:?}, mount_path={:?})",
             data_path,
             mount_path
         );
@@ -99,11 +99,15 @@ impl DataVirFS {
     }
 
     pub fn mount(mut self) -> IOResult<()> {
+        let self_str = format!("{:?}", self);
+        trace!("+DataVirFS::mount(self={})", self_str);
         self.ensure_fs_name("datavir");
         self.ensure_auto_unmount();
         let mount_opts_copy = self.mount_opts.clone();
         let mount_path_copy = self.mount_path.clone();
-        fuser::mount2(self, mount_path_copy.as_path(), &mount_opts_copy)
+        let ans = fuser::mount2(self, mount_path_copy.as_path(), &mount_opts_copy);
+        trace!("-DataVirFS::mount(self={})", self_str);
+        ans
     }
 }
 
