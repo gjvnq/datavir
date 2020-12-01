@@ -1,5 +1,5 @@
 use crate::inode_record::INodeRegisterable;
-use crate::node_type::NodeType;
+use crate::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -25,8 +25,8 @@ impl INodeRegisterable for Bundle {
     fn get_uuid(&self) -> uuid::Uuid {
         self.bundle_uuid
     }
-    fn get_node_type(&self) -> NodeType {
-        NodeType::BundleRoot
+    fn get_obj_type(&self) -> ObjectType {
+        ObjectType::BundleRoot
     }
     fn get_path(&self) -> std::string::String {
         "".to_string()

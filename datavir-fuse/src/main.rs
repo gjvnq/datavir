@@ -3,7 +3,7 @@ mod bundle_file;
 mod datavir_fs;
 mod hacks;
 mod inode_record;
-mod node_type;
+mod object_type;
 mod prelude;
 mod schema;
 

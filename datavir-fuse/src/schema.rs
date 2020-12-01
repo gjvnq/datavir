@@ -19,7 +19,6 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
             `bundle_uuid` CHAR(36),\
             `conflicts_from` CHAR(36),\
             `sync_status` INT,\
-            `modified` TIMESTAMP,\
             `name` VARCHAR(250));",
         ),
         indexes: vec![(
@@ -33,7 +32,6 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
             "CREATE TABLE IF NOT EXISTS `files` (\
             `file_uuid` CHAR(36),\
             `bundle_uuid` CHAR(36),\
-            `modified` TIMESTAMP,\
             `base_blob_uuid` CHAR(36),\
             `tree_hash` VARCHAR(200),\
             `kind` CHAR(1),\
@@ -97,13 +95,17 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
     v1_schema.push(SchemaItem{
         table: ("inode", "CREATE TABLE IF NOT EXISTS `inode` (\
             `inode_num` INTEGER PRIMARY KEY, /* the value is actually u64 but may be preented as i64 */\
-            `object_uuid` CHAR(36),\
-            `object_type` VARCHAR(20),\
+            `obj_uuid` CHAR(36),\
+            `obj_type` VARCHAR(20),\
+            `file_type` VARCHAR(1),\
+            `mtime` INTEGER DEFAULT (strftime('%s','now')) NOT NULL,\
+            `ctime` INTEGER DEFAULT (strftime('%s','now')) NOT NULL,\
+            `crtime` INTEGER DEFAULT (strftime('%s','now')) NOT NULL,\
             `path` VARCHAR(250)\
         ) WITHOUT ROWID;"),
         indexes: vec![
             ("inode_inode_num_idx", "CREATE INDEX IF NOT EXISTS `inode_inode_num_idx` ON `inode` (`inode_num`);"),
-            ("inode_object_uuid_idx", "CREATE INDEX IF NOT EXISTS `inode_object_uuid_idx` ON `inode` (`object_uuid`);")
+            ("inode_object_uuid_idx", "CREATE INDEX IF NOT EXISTS `inode_object_uuid_idx` ON `inode` (`obj_uuid`);")
         ]
     });
 
@@ -180,7 +182,7 @@ fn get_schema_version(conn: &Connection) -> SQLResult<i32> {
 fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
     trace!("+{}", stringify!(reserve_inodes));
     let res: rusqlite::Result<i32> = conn.query_row(
-        "SELECT COUNT() FROM `inode` WHERE `inode_num` < ?1 AND `object_type` != 'S'",
+        "SELECT COUNT() FROM `inode` WHERE `inode_num` < ?1 AND `obj_type` != 'R'",
         params![INODE_MIN],
         |row| row.get(0),
     );
@@ -202,11 +204,38 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
         panic!(msg);
     }
 
-    for inode_num in 0..INODE_MIN {
+    // let now = SystemTime::now();
+    // let now_unix = time2sql(now)?;
+    trace!("Reverving root inode");
+    conn.execute(
+        "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
+        (1, '00000000-0000-0000-0000-000000000000', 'R', 'D', '.')",
+        params![],
+    )?;
+    trace!("Reverving config inode");
+    conn.execute(
+        "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
+        (2, '00000000-0000-0000-0000-000000000000', 'R', 'F', 'datavir.toml')",
+        params![],
+    )?;
+    trace!("Reverving socket inode");
+    conn.execute(
+        "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
+        (3, '00000000-0000-0000-0000-000000000000', 'R', 'F', '.datavir.socket')",
+        params![],
+    )?;
+    trace!("Reverving status inode");
+    conn.execute(
+        "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
+        (4, '00000000-0000-0000-0000-000000000000', 'R', 'F', '.datavir.status')",
+        params![],
+    )?;
+
+    for inode_num in 5..INODE_MIN {
         trace!("Reverving inode number {}", inode_num);
         conn.execute(
-            "INSERT OR REPLACE INTO `inode` (`inode_num`, `object_uuid`, `object_type`, `path`) VALUES \
-            (?1, '00000000-0000-0000-0000-000000000000', 'S', NULL)",
+            "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `path`) VALUES \
+            (?1, '00000000-0000-0000-0000-000000000000', 'R', NULL)",
             params![inode_num],
         )?;
     }

@@ -79,21 +79,28 @@ impl DataVirFS {
     }
 
     fn ensure_fs_name(&mut self, default_name: &str) {
-        let mut has_fs_name = false;
         for opt in &self.mount_opts {
             if let MountOption::FSName(_) = opt {
-                has_fs_name = true;
-                break;
+                return;
             }
         }
-        if !has_fs_name {
-            self.mount_opts
-                .push(MountOption::FSName(default_name.to_string()));
+        self.mount_opts
+            .push(MountOption::FSName(default_name.to_string()));
+    }
+
+    // It doesn't seem to be working
+    fn ensure_auto_unmount(&mut self) {
+        for opt in &self.mount_opts {
+            if let MountOption::AutoUnmount = opt {
+                return;
+            }
         }
+        self.mount_opts.push(MountOption::AutoUnmount);
     }
 
     pub fn mount(mut self) -> IOResult<()> {
         self.ensure_fs_name("datavir");
+        self.ensure_auto_unmount();
         let mount_opts_copy = self.mount_opts.clone();
         let mount_path_copy = self.mount_path.clone();
         fuser::mount2(self, mount_path_copy.as_path(), &mount_opts_copy)
