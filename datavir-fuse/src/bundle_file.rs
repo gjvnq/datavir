@@ -34,7 +34,7 @@ impl INodeRegisterable for BundleFile {
     fn get_obj_type(&self) -> ObjectType {
         ObjectType::BundleElement
     }
-    fn get_path(&self) -> std::string::String {
+    fn get_name(&self) -> std::string::String {
         self.path.clone()
     }
 }

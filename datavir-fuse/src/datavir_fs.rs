@@ -123,13 +123,17 @@ impl DataVirFS {
         self.conn.transaction().unwrap()
     }
 
-    fn find_in_root(&mut self, name: &str) -> DVResult<FileAttr> {
-        let name = match name {
-            ".Trash" => "Trash",
-            name => name,
-        };
+    fn find_in_root(&mut self, parent: u64, name: &str) -> DVResult<FileAttr> {
+        let mut name = name;
+        if parent == 1 {
+            name = match name {
+                ".Trash" => "Trash",
+                name => name,
+            };
+        }
         trace!("{:?}", name);
         let ans = INodeRecord::find_one(
+            Some(parent),
             Some(name),
             Some(ObjectType::Reserved),
             None,
@@ -145,7 +149,7 @@ impl DataVirFS {
 
     fn lookup(&mut self, _req: &Request, parent: u64, name: &str) -> DVResult<FileAttr> {
         if parent == 1 {
-            return self.find_in_root(name);
+            return self.find_in_root(parent, name);
         }
         Err(DVError::NotImplemented)
     }
@@ -244,6 +248,7 @@ impl Filesystem for DataVirFS {
 
             // The -2 is because of the . and ..
             let list = INodeRecord::search(
+                Some(ino),
                 None,
                 Some(ObjectType::Reserved),
                 None,
@@ -259,16 +264,13 @@ impl Filesystem for DataVirFS {
             }
             let mut counter = offset;
             for node in list.unwrap() {
-                if node.get_path() == "." {
-                    continue;
-                }
                 counter += 1;
                 // The unwrap is safe because the nodes came right form the database
                 if reply.add(
                     node.get_inode_num().unwrap(),
                     counter,
                     node.get_file_type(),
-                    node.get_path(),
+                    node.get_name(),
                 ) {
                     break;
                 }
@@ -277,7 +279,7 @@ impl Filesystem for DataVirFS {
                     node.get_inode_num().unwrap(),
                     0,
                     node.get_file_type(),
-                    node.get_path()
+                    node.get_name()
                 );
             }
             reply.ok();

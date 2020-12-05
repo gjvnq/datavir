@@ -28,7 +28,7 @@ impl INodeRegisterable for Bundle {
     fn get_obj_type(&self) -> ObjectType {
         ObjectType::BundleRoot
     }
-    fn get_path(&self) -> std::string::String {
+    fn get_name(&self) -> std::string::String {
         "".to_string()
     }
 }
