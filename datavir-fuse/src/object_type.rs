@@ -4,7 +4,7 @@ use rusqlite::types::FromSqlError;
 use rusqlite::types::ToSqlOutput;
 use rusqlite::ToSql;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ObjectType {
     Reserved,
     Filter,

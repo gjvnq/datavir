@@ -1,5 +1,6 @@
 use crate::inode_record::INodeRecord;
 use crate::inode_record::INODE_MIN;
+use crate::inode_record::INODE_ROOT;
 use crate::open_database;
 use crate::prelude::*;
 use core::sync::atomic::AtomicU64;
@@ -118,6 +119,10 @@ impl DataVirFS {
         ans
     }
 
+    fn new_tx(&mut self) -> Transaction {
+        self.conn.transaction().unwrap()
+    }
+
     fn find_in_root(&mut self, name: &str) -> DVResult<FileAttr> {
         let name = match name {
             ".Trash" => "Trash",
@@ -129,7 +134,7 @@ impl DataVirFS {
             Some(ObjectType::Reserved),
             None,
             None,
-            &self.conn.transaction().unwrap(),
+            &self.new_tx(),
         );
         debug!("{:?}", ans);
         match ans {
@@ -217,6 +222,90 @@ impl Filesystem for DataVirFS {
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
+        let trace_msg = format!(
+            "DataVirFS::readdir(_req={}, ino={}, offset={})",
+            fmt_request(_req),
+            ino,
+            offset
+        );
+        trace!("+{}", trace_msg);
+
+        if ino == INODE_ROOT {
+            if offset == 0 {
+                if reply.add(INODE_ROOT, 1, FileType::Directory, ".") {
+                    reply.ok();
+                    return;
+                }
+                if reply.add(INODE_ROOT, 2, FileType::Directory, "..") {
+                    reply.ok();
+                    return;
+                }
+            }
+
+            // The -2 is because of the . and ..
+            let list = INodeRecord::search(
+                None,
+                Some(ObjectType::Reserved),
+                None,
+                None,
+                Some(32),
+                Some(offset - 2),
+                &self.new_tx(),
+            );
+            if let Err(err) = list {
+                trace!("-{} -> {:?}", trace_msg, err);
+                reply.error(i32::from(err));
+                return;
+            }
+            let mut counter = offset;
+            for node in list.unwrap() {
+                if node.get_path() == "." {
+                    continue;
+                }
+                counter += 1;
+                // The unwrap is safe because the nodes came right form the database
+                if reply.add(
+                    node.get_inode_num().unwrap(),
+                    counter,
+                    node.get_file_type(),
+                    node.get_path(),
+                ) {
+                    break;
+                }
+                debug!(
+                    "{} {} {:?} {:?}",
+                    node.get_inode_num().unwrap(),
+                    0,
+                    node.get_file_type(),
+                    node.get_path()
+                );
+            }
+            reply.ok();
+            info!("Replied ROOT");
+            return;
+        }
+
+        // get inode and check if it is a directory
+        let node = match INodeRecord::get(ino, &self.new_tx()) {
+            Ok(v) => v,
+            Err(err) => {
+                trace!("-{} -> {:?}", trace_msg, err);
+                reply.error(i32::from(err));
+                return;
+            }
+        };
+        if node.get_file_type() != FileType::Directory {
+            reply.error(POSIX_NOT_A_DIRECTORY);
+            return;
+        }
+
+        // match DataVirFS::readdir(self, _req, ino, _fh, offset) {
+        //     Ok(attr) => reply.entry(&self.basic_ttl, &attr, 0),
+        //     Err(err) => {
+        //         trace!("-{} -> {:?}", trace_msg, err);
+        //         reply.error(i32::from(err));
+        //     }
+        // }
         reply.error(ENOENT);
     }
 }

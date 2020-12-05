@@ -12,19 +12,19 @@ use uuid::Uuid;
 use std::time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH};
 
 #[allow(dead_code)]
-const INODE_ROOT: u64 = 1;
+pub const INODE_ROOT: u64 = 1;
 #[allow(dead_code)]
-const INODE_CONFIG: u64 = 2;
+pub const INODE_CONFIG: u64 = 2;
 #[allow(dead_code)]
-const INODE_SOCKET: u64 = 3;
+pub const INODE_SOCKET: u64 = 3;
 #[allow(dead_code)]
-const INODE_BUNDLES_TXT: u64 = 4;
+pub const INODE_BUNDLES_TXT: u64 = 4;
 #[allow(dead_code)]
-const INODE_FILTERS_DIR: u64 = 5;
+pub const INODE_FILTERS_DIR: u64 = 5;
 #[allow(dead_code)]
-const INODE_ALL_BUNDLES_DIR: u64 = 6;
+pub const INODE_ALL_BUNDLES_DIR: u64 = 6;
 #[allow(dead_code)]
-const INODE_BUNDLES_DIR: u64 = 7;
+pub const INODE_BUNDLES_DIR: u64 = 7;
 
 pub const INODE_MIN: i64 = 64;
 
@@ -122,7 +122,7 @@ fn file_type2string(kind: FileType) -> &'static str {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct INodeRecord {
     inode_num: Option<u64>,
     obj_uuid: Uuid,
@@ -135,6 +135,25 @@ pub struct INodeRecord {
 }
 
 impl INodeRecord {
+    pub fn get_inode_num(&self) -> Option<u64> {
+        self.inode_num
+    }
+    pub fn get_obj_uuid(&self) -> Uuid {
+        self.obj_uuid
+    }
+    pub fn get_obj_type(&self) -> ObjectType {
+        self.obj_type
+    }
+    pub fn get_file_type(&self) -> FileType {
+        self.file_type
+    }
+    pub fn get_path_str(&self) -> &str {
+        self.path.as_str()
+    }
+    pub fn get_path(&self) -> String {
+        self.path.clone()
+    }
+
     fn new(
         num: Option<u64>,
         uuid: Uuid,
@@ -313,15 +332,17 @@ impl INodeRecord {
     }
 
     #[allow(dead_code)]
-    pub fn find_one(
+    pub fn search(
         path: Option<&str>,
         obj_type: Option<ObjectType>,
         obj_uuid: Option<Uuid>,
         file_type: Option<FileType>,
+        limit: Option<u64>,
+        offset: Option<i64>,
         tx: &Transaction,
-    ) -> DVResult<INodeRecord> {
+    ) -> DVResult<Vec<INodeRecord>> {
         let trace_msg = format!(
-            "INodeRecord::find_one(path={:?}, obj_type={:?}, obj_uuid={:?}, file_type={:?}",
+            "INodeRecord::search(path={:?}, obj_type={:?}, obj_uuid={:?}, file_type={:?}",
             path, obj_type, obj_uuid, file_type
         );
         trace!("+{}", trace_msg);
@@ -334,6 +355,8 @@ impl INodeRecord {
         if path.is_some() {
             params.push(&path);
             sql += &format!(" AND `path` = ?{}", params.len());
+        } else {
+            sql += " AND `path` IS NOT NULL";
         }
         if obj_type.is_some() {
             params.push(&obj_type);
@@ -347,10 +370,26 @@ impl INodeRecord {
             params.push(&file_type2);
             sql += &format!(" AND `file_type` = ?{}", params.len());
         }
-        debug!("{:?}", sql);
-        debug!("{:?}", params.len());
-        let res = tx.query_row(&sql, params, |row| {
-            Ok(INodeRecord::new_sql(
+        if offset.is_some() {
+            sql += " ORDER BY `inode_num` ASC";
+        }
+        if let Some(limit) = limit {
+            sql += &format!(" LIMIT {}", limit);
+        }
+        if let Some(offset) = offset {
+            // SQLite dosen't like OFFSET without LIMIT
+            if limit.is_some() {
+                sql += &format!(" OFFSET {}", offset);
+            }
+        }
+        debug!("{}", sql);
+        let mut stmt = tx.prepare(&sql)?;
+        let mut rows = stmt.query(params)?;
+        let mut ans = Vec::new();
+        let mut last_err: Option<DVError> = None;
+
+        while let Some(row) = rows.next()? {
+            let node = INodeRecord::new_sql(
                 row.get(0)?,
                 row.get(1)?,
                 row.get(2)?,
@@ -359,18 +398,42 @@ impl INodeRecord {
                 row.get(5)?,
                 row.get(6)?,
                 row.get(7)?,
-            ))
-        });
-        match res {
-            Ok(v) => {
-                trace!("-{} -> {:?}", trace_msg, v);
-                v
-            }
-            Err(err) => {
-                error!("Failed to get search inode in database: {:?}", err);
+            );
+            match node {
+                Ok(node) => ans.push(node),
+                Err(err) => {
+                    last_err = Some(err);
+                }
+            };
+        }
+        if ans.len() == 0 && limit.unwrap_or(1) > 0 {
+            if let Some(err) = last_err {
+                error!("Failed to search inodes in database: {:?}", err);
                 trace!("-{} -> {:?}", trace_msg, err);
-                Err(DVError::SQLError(err))
+                return Err(err);
             }
+        }
+        trace!("-{} -> {} nodes", trace_msg, ans.len());
+        Ok(ans)
+    }
+
+    #[allow(dead_code)]
+    pub fn find_one(
+        path: Option<&str>,
+        obj_type: Option<ObjectType>,
+        obj_uuid: Option<Uuid>,
+        file_type: Option<FileType>,
+        tx: &Transaction,
+    ) -> DVResult<INodeRecord> {
+        match INodeRecord::search(path, obj_type, obj_uuid, file_type, Some(1), None, tx) {
+            Ok(v) => {
+                if v.len() > 0 {
+                    Ok(v[0].clone())
+                } else {
+                    Err(DVError::SQLError(SQLError::QueryReturnedNoRows))
+                }
+            }
+            Err(err) => Err(err),
         }
     }
 
