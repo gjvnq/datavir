@@ -27,7 +27,6 @@ const INODE_ALL_BUNDLES_DIR: u64 = 6;
 const INODE_BUNDLES_DIR: u64 = 7;
 
 pub const INODE_MIN: i64 = 64;
-static INODE_NEXT: AtomicU64 = AtomicU64::new(INODE_MIN as u64);
 
 #[allow(dead_code)]
 const MIN_HARD_LINKS_DIR: u32 = 2;
@@ -98,17 +97,34 @@ fn sql2time(time: i64) -> DVResult<SystemTime> {
     }
 }
 
-fn string2file_type(str: &str) -> DVResult<FileType> {
-    unimplemented!()
+fn string2file_type(val: &str) -> DVResult<FileType> {
+    match val {
+        "F" => Ok(FileType::RegularFile),
+        "D" => Ok(FileType::Directory),
+        "C" => Ok(FileType::CharDevice),
+        "P" => Ok(FileType::NamedPipe),
+        "B" => Ok(FileType::BlockDevice),
+        "S" => Ok(FileType::Socket),
+        "L" => Ok(FileType::Symlink),
+        _ => Err(DVError::FuseTypeParseError(val.to_string())),
+    }
 }
 
-fn file_type2string(kind: FileType) -> String {
-    unimplemented!()
+fn file_type2string(kind: FileType) -> &'static str {
+    match kind {
+        FileType::RegularFile => "F",
+        FileType::Directory => "D",
+        FileType::CharDevice => "C",
+        FileType::NamedPipe => "P",
+        FileType::BlockDevice => "B",
+        FileType::Socket => "S",
+        FileType::Symlink => "L",
+    }
 }
 
 #[derive(Debug)]
-struct INodeRecord {
-    inode_num: u64,
+pub struct INodeRecord {
+    inode_num: Option<u64>,
     obj_uuid: Uuid,
     obj_type: ObjectType,
     file_type: FileType,
@@ -120,7 +136,7 @@ struct INodeRecord {
 
 impl INodeRecord {
     fn new(
-        num: u64,
+        num: Option<u64>,
         uuid: Uuid,
         obj_type: ObjectType,
         file_type: FileType,
@@ -143,7 +159,7 @@ impl INodeRecord {
 
     fn new_sql(
         num: i64,
-        uuid: Uuid,
+        uuid: String,
         obj_type: ObjectType,
         file_type: String,
         path: String,
@@ -156,15 +172,23 @@ impl INodeRecord {
         let ctime = sql2time(ctime)?;
         let crtime = sql2time(crtime)?;
         let file_type = string2file_type(&file_type)?;
+        let uuid = parse_uuid(&uuid)?;
 
         Ok(INodeRecord::new(
-            num, uuid, obj_type, file_type, path, mtime, ctime, crtime,
+            Some(num),
+            uuid,
+            obj_type,
+            file_type,
+            path,
+            mtime,
+            ctime,
+            crtime,
         ))
     }
 
     #[allow(dead_code)]
     pub fn new_now(
-        num: u64,
+        num: Option<u64>,
         uuid: Uuid,
         obj_type: ObjectType,
         file_type: FileType,
@@ -179,20 +203,54 @@ impl INodeRecord {
         uuid: Uuid,
         obj_type: ObjectType,
         file_type: FileType,
+        inode_next: &AtomicU64,
         path: String,
     ) -> Self {
         let now = SystemTime::now();
-        let num = get_next_inode();
-        INodeRecord::new(num, uuid, obj_type, file_type, path, now, now, now)
+        let num = get_next_inode(inode_next);
+        INodeRecord::new(Some(num), uuid, obj_type, file_type, path, now, now, now)
     }
 
-    fn get_inode_i64(&self) -> i64 {
-        u64_to_i64(self.inode_num)
+    fn get_inode_i64(&self) -> DVResult<i64> {
+        match self.inode_num {
+            Some(num) => Ok(u64_to_i64(num)),
+            None => {
+                error!("INode has no number: {:?}", self);
+                Err(DVError::INodeNoNum(format!("{:?}", self)))
+            }
+        }
+    }
+
+    fn ensure_id(&mut self, inode_next: &AtomicU64) {
+        if self.inode_num.is_none() {
+            self.inode_num = Some(get_next_inode(inode_next));
+            trace!("~INodeRecord::ensure_id(self={:?})", self);
+        }
     }
 
     #[allow(dead_code)]
-    pub fn insert(&mut self, _tx: &Transaction) -> DVResult<()> {
-        unimplemented!()
+    pub fn insert(&mut self, inode_next: &AtomicU64, tx: &Transaction) -> DVResult<()> {
+        trace!("+INodeRecord::insert(self={:?})", self);
+        self.ensure_id(inode_next);
+        let now = SystemTime::now();
+        let now_unix = time2sql(now)?;
+        let inode_num = self.get_inode_i64()?;
+        let res = tx.execute(
+            "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`, `ctime`, `mtime`, `crtime`) VALUES \
+        (?, ?, ?, ?, ?)",
+            params![
+                inode_num, self.obj_uuid, self.obj_type, file_type2string(self.file_type), self.path, now_unix, now_unix, now_unix]);
+        if let Err(err) = res {
+            error!("Failed to update metadata for INodeRecord: {:?}", err);
+            trace!("-INodeRecord::insert(self={:?}) -> {:?}", self, err);
+            Err(DVError::SQLError(err))
+        } else {
+            self.ctime = now;
+            self.mtime = now;
+            self.crtime = now;
+            trace!("-INodeRecord::insert(self={:?}) -> Ok", self);
+            Ok(())
+        }
     }
 
     #[allow(dead_code)]
@@ -205,7 +263,8 @@ impl INodeRecord {
             Some(_) => "UPDATE `inode` SET `ctime` = ?1, `path` = ?2 WHERE `inode_num` = ?3",
             None => "UPDATE `inode` SET `ctime` = ?1, WHERE `inode_num` = ?3",
         };
-        let res = tx.execute(sql, params![now_unix, new_path, self.get_inode_i64()]);
+        let inode_num = self.get_inode_i64()?;
+        let res = tx.execute(sql, params![now_unix, new_path, inode_num]);
         if let Err(err) = res {
             error!("Failed to update metadata for INodeRecord: {:?}", err);
             trace!(
@@ -231,9 +290,10 @@ impl INodeRecord {
         trace!("+INodeRecord::update_mtime(self={:?})", self);
         let now = SystemTime::now();
         let now_unix = time2sql(now)?;
+        let inode_num = self.get_inode_i64()?;
         let res = tx.execute(
             "INSERT OR REPLACE INTO `inode` (`inode_num`, `mtime`) (?1, ?2)",
-            params![self.get_inode_i64(), now_unix],
+            params![inode_num, now_unix],
         );
         if let Err(err) = res {
             error!("Failed to update metadata for INodeRecord: {:?}", err);
@@ -253,10 +313,78 @@ impl INodeRecord {
     }
 
     #[allow(dead_code)]
+    pub fn find_one(
+        path: Option<&str>,
+        obj_type: Option<ObjectType>,
+        obj_uuid: Option<Uuid>,
+        file_type: Option<FileType>,
+        tx: &Transaction,
+    ) -> DVResult<INodeRecord> {
+        let trace_msg = format!(
+            "INodeRecord::find_one(path={:?}, obj_type={:?}, obj_uuid={:?}, file_type={:?}",
+            path, obj_type, obj_uuid, file_type
+        );
+        trace!("+{}", trace_msg);
+        let mut sql = "SELECT `inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`, `mtime`, `ctime`, `crtime` FROM `inode` WHERE 1 = 1".to_string();
+        let file_type2 = match file_type {
+            Some(s) => file_type2string(s),
+            None => "-",
+        };
+        if path.is_some() {
+            sql += " AND `path` = ?1";
+        } else {
+            sql += " AND (1 = 1 OR `path` = ?1)";
+        }
+        if obj_type.is_some() {
+            sql += " AND `obj_type` = ?2";
+        } else {
+            sql += " AND (1 = 1 OR `obj_type` = ?2)";
+        }
+        if obj_uuid.is_some() {
+            sql += " AND `obj_uuid` = ?3";
+        } else {
+            sql += " AND (1 = 1 OR `obj_uuid` = ?3)";
+        }
+        if file_type.is_some() {
+            sql += " AND `file_type` = ?4";
+        } else {
+            sql += " AND (1 = 1 OR `file_type` = ?4)";
+        }
+        debug!("{:?}", sql);
+        let res = tx.query_row(
+            &sql,
+            params![path, obj_type, obj_uuid, file_type2],
+            |row| {
+                Ok(INodeRecord::new_sql(
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            }, // |row| Ok(INodeRecord::new_sql(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, 0,0,0,))
+        );
+        match res {
+            Ok(v) => {
+                trace!("-{} -> {:?}", trace_msg, v);
+                v
+            }
+            Err(err) => {
+                error!("Failed to get search inode in database: {:?}", err);
+                trace!("-{} -> {:?}", trace_msg, err);
+                Err(DVError::SQLError(err))
+            }
+        }
+    }
+
+    #[allow(dead_code)]
     pub fn get(inode_num: u64, tx: &Transaction) -> DVResult<INodeRecord> {
         trace!("+INodeRecord::get(inode_num={})", inode_num);
         let res = tx.query_row(
-        "SELECT `inode_num`, `object_uuid`, `object_type`, `file_type` `mtime`, `ctime`, `crtime`, `path` FROM `inode` WHERE `inode_num` = ?1",
+        "SELECT `inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`, `mtime`, `ctime`, `crtime` FROM `inode` WHERE `inode_num` = ?1",
         params![u64_to_i64(inode_num)],
         |row| Ok(INodeRecord::new_sql(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?))
     );
@@ -326,7 +454,7 @@ impl INodeRecord {
     }
 }
 
-pub fn set_inode_counter(conn: &Connection) -> Result<(), rusqlite::Error> {
+pub fn set_inode_counter(conn: &Connection, inode_next: &AtomicU64) -> Result<(), rusqlite::Error> {
     trace!("+{}", stringify!(set_inode_counter));
     let inode_num = get_highest_inode(conn);
     if let Err(err) = inode_num {
@@ -335,7 +463,7 @@ pub fn set_inode_counter(conn: &Connection) -> Result<(), rusqlite::Error> {
         return Err(err);
     }
     let inode_num = inode_num.unwrap();
-    INODE_NEXT.store(inode_num + 1, Ordering::SeqCst);
+    inode_next.store(inode_num + 1, Ordering::SeqCst);
     debug!("Set INODE_NEXT to {}", inode_num);
     trace!("-{}", stringify!(set_inode_counter));
     return Ok(());
@@ -370,6 +498,6 @@ fn get_highest_inode(conn: &Connection) -> Result<u64, rusqlite::Error> {
     }
 }
 
-fn get_next_inode() -> u64 {
-    INODE_NEXT.fetch_add(1, Ordering::SeqCst)
+fn get_next_inode(inode_next: &AtomicU64) -> u64 {
+    inode_next.fetch_add(1, Ordering::SeqCst)
 }

@@ -1,6 +1,7 @@
 use crate::inode_record::set_inode_counter;
 use crate::inode_record::INODE_MIN;
 use crate::prelude::*;
+use core::sync::atomic::AtomicU64;
 use rusqlite::config::DbConfig;
 
 #[derive(Debug)]
@@ -204,32 +205,65 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
         panic!(msg);
     }
 
+    let mut reservations = 1;
     trace!("Reserving root inode");
     conn.execute(
         "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
         (1, '00000000-0000-0000-0000-000000000000', 'R', 'D', '.')",
         params![],
     )?;
+    reservations += 1;
     trace!("Reserving config inode");
     conn.execute(
         "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
         (2, '00000000-0000-0000-0000-000000000000', 'R', 'F', 'datavir.toml')",
         params![],
     )?;
+    reservations += 1;
     trace!("Reserving socket inode");
     conn.execute(
         "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
         (3, '00000000-0000-0000-0000-000000000000', 'R', 'F', '.datavir.socket')",
         params![],
     )?;
+    reservations += 1;
     trace!("Reserving status inode");
     conn.execute(
         "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
         (4, '00000000-0000-0000-0000-000000000000', 'R', 'F', '.datavir.status')",
         params![],
     )?;
+    reservations += 1;
+    trace!("Reserving volumes inode");
+    conn.execute(
+        "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
+        (5, '00000000-0000-0000-0000-000000000000', 'R', 'D', 'Volumes')",
+        params![],
+    )?;
+    reservations += 1;
+    trace!("Reserving all bundles inode");
+    conn.execute(
+        "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
+        (6, '00000000-0000-0000-0000-000000000000', 'R', 'D', 'All Bundles')",
+        params![],
+    )?;
+    reservations += 1;
+    trace!("Reserving all filters inode");
+    conn.execute(
+        "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
+        (7, '00000000-0000-0000-0000-000000000000', 'R', 'D', 'All Filters')",
+        params![],
+    )?;
+    reservations += 1;
+    trace!("Reserving trash inode");
+    conn.execute(
+        "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `path`) VALUES \
+        (8, '00000000-0000-0000-0000-000000000000', 'R', 'D', 'Trash')",
+        params![],
+    )?;
+    reservations += 1;
 
-    for inode_num in 5..INODE_MIN {
+    for inode_num in reservations..INODE_MIN {
         trace!("Reserving inode number {}", inode_num);
         conn.execute(
             "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `path`) VALUES \
@@ -243,7 +277,7 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
     Ok(())
 }
 
-fn upgrade_schema(conn: &Connection) -> SQLResult<()> {
+fn upgrade_schema(conn: &Connection, inode_next: &AtomicU64) -> SQLResult<()> {
     trace!("+{}", stringify!(upgrade_schema));
     // Ensure app_config table exists
     let res = conn.execute(
@@ -275,7 +309,7 @@ fn upgrade_schema(conn: &Connection) -> SQLResult<()> {
     // Ensure certain inode numbers are reserved
     reserve_inodes(conn)?;
     // Adjust inode counter
-    set_inode_counter(conn)?;
+    set_inode_counter(conn, inode_next)?;
 
     trace!("-{} -> Ok", stringify!(upgrade_schema));
     Ok(())
@@ -333,12 +367,12 @@ fn set_conn_options(conn: &Connection) -> SQLResult<()> {
     Ok(())
 }
 
-pub fn open_database(db_path: &Path) -> SQLResult<Connection> {
+pub fn open_database(db_path: &Path, inode_next: &AtomicU64) -> SQLResult<Connection> {
     trace!("+{}(db_path={:?})", stringify!(open_database), db_path);
     match Connection::open(db_path) {
         Ok(conn) => {
             set_conn_options(&conn)?;
-            upgrade_schema(&conn)?;
+            upgrade_schema(&conn, inode_next)?;
             trace!(
                 "-{}(db_path={:?}) -> Ok",
                 stringify!(open_database),

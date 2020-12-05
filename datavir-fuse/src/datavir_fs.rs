@@ -1,5 +1,9 @@
+use crate::inode_record::INodeRecord;
+use crate::inode_record::INODE_MIN;
 use crate::open_database;
 use crate::prelude::*;
+use core::sync::atomic::AtomicU64;
+use core::time::Duration;
 #[allow(unused_imports)]
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
@@ -15,6 +19,8 @@ pub struct DataVirFS {
     data_path: PathBuf,
     mount_path: PathBuf,
     mount_opts: Vec<MountOption>,
+    inode_next: AtomicU64,
+    basic_ttl: Duration,
 }
 
 impl DataVirFS {
@@ -56,9 +62,10 @@ impl DataVirFS {
         }
 
         // Open database
+        let inode_next = AtomicU64::new(INODE_MIN as u64);
         let mut db_path = data_path.to_path_buf();
         db_path.push("datavir.sqlite");
-        let conn = match open_database(db_path.as_path()) {
+        let conn = match open_database(db_path.as_path(), &inode_next) {
             Ok(v) => v,
             Err(err) => {
                 error!("Failed to open database at {:?}: {:?}", db_path, err);
@@ -74,6 +81,8 @@ impl DataVirFS {
             data_path: data_path.to_path_buf(),
             mount_path: mount_path.to_path_buf(),
             mount_opts: vec![],
+            inode_next: inode_next,
+            basic_ttl: Duration::from_secs(1),
         })
     }
 
@@ -108,12 +117,74 @@ impl DataVirFS {
         trace!("-DataVirFS::mount(self={})", self_str);
         ans
     }
+
+    fn find_in_root(&mut self, name: &str) -> DVResult<FileAttr> {
+        let name = match name {
+            ".Trash" => "Trash",
+            name => name,
+        };
+        trace!("{:?}", name);
+        let ans = INodeRecord::find_one(
+            Some(name),
+            Some(ObjectType::Reserved),
+            None,
+            None,
+            &self.conn.transaction().unwrap(),
+        );
+        debug!("{:?}", ans);
+        match ans {
+            Ok(v) => Ok(v.to_file_attr(0)),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn lookup(&mut self, _req: &Request, parent: u64, name: &str) -> DVResult<FileAttr> {
+        if parent == 1 {
+            return self.find_in_root(name);
+        }
+        Err(DVError::NotImplemented)
+    }
+}
+
+impl panic::UnwindSafe for DataVirFS {}
+
+impl panic::RefUnwindSafe for DataVirFS {}
+
+fn fmt_request(req: &Request) -> String {
+    format!(
+        "Request{{unique: {}, uid: {}, gid: {}, pid: {}}}",
+        req.unique(),
+        req.uid(),
+        req.gid(),
+        req.pid()
+    )
 }
 
 impl Filesystem for DataVirFS {
     #[allow(unused_variables)]
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
-        reply.error(ENOENT);
+        let trace_msg = format!(
+            "DataVirFS::lookup(_req={}, parent={}, name={:?})",
+            fmt_request(_req),
+            parent,
+            name
+        );
+        trace!("+{}", trace_msg);
+        let name = match name.to_str() {
+            Some(s) => s,
+            None => {
+                error!("Failed to convert OsStr: {:?}", name);
+                reply.error(POSIX_IO_ERROR);
+                return;
+            }
+        };
+        match DataVirFS::lookup(self, _req, parent, name) {
+            Ok(attr) => reply.entry(&self.basic_ttl, &attr, 0),
+            Err(err) => {
+                trace!("-{} -> {:?}", trace_msg, err);
+                reply.error(i32::from(err));
+            }
+        }
     }
 
     #[allow(unused_variables)]
