@@ -98,22 +98,60 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
             ("basic_metadata_predicate_idx", "CREATE INDEX IF NOT EXISTS `basic_metadata_predicate_idx` ON `basic_metadata` (`predicate`);")
         ]
     });
-    v1_schema.push(SchemaItem{
-        table: ("inode", "CREATE TABLE IF NOT EXISTS `inode` (\
-            `inode_num` INTEGER PRIMARY KEY, /* the value is actually u64 but may be preented as i64 */\
-            `parent` INTEGER,\
+    v1_schema.push(SchemaItem {
+        table: (
+            "node_meta",
+            "CREATE TABLE IF NOT EXISTS `node_meta` (\
+            `inode` INTEGER PRIMARY KEY,\
             `obj_uuid` CHAR(36),\
             `obj_type` VARCHAR(20),\
             `file_type` VARCHAR(1),\
             `mtime` INTEGER DEFAULT (strftime('%s','now')) NOT NULL,\
             `ctime` INTEGER DEFAULT (strftime('%s','now')) NOT NULL,\
-            `crtime` INTEGER DEFAULT (strftime('%s','now')) NOT NULL,\
-            `name` VARCHAR(250)\
-        ) WITHOUT ROWID;"),
+            `crtime` INTEGER DEFAULT (strftime('%s','now')) NOT NULL\
+        ) WITHOUT ROWID;",
+        ),
         indexes: vec![
-            ("inode_inode_num_idx", "CREATE INDEX IF NOT EXISTS `inode_inode_num_idx` ON `inode` (`inode_num`);"),
-            ("inode_object_uuid_idx", "CREATE INDEX IF NOT EXISTS `inode_object_uuid_idx` ON `inode` (`obj_uuid`);")
+            (
+                "node_meta_inode_idx",
+                "CREATE INDEX IF NOT EXISTS `node_meta_inode_idx` ON `node_meta` (`inode`);",
+            ),
+            (
+                "node_meta_obj_uuid_idx",
+                "CREATE INDEX IF NOT EXISTS `node_meta_obj_uuid_idx` ON `node_meta` (`obj_uuid`);",
+            ),
+        ],
+    });
+    v1_schema.push(SchemaItem{
+        table: ("node_names", "CREATE TABLE IF NOT EXISTS `node_name` (\
+            `inode` INTEGER NOT NULL,\
+            `parent` INTEGER, /* parent can be null on purpose, it may help with bundle structure */\
+            `hidden` BOOLEAN DEFAULT 0 NOT NULL,\
+            `name` VARCHAR(250) NOT NULL\
+        )"),
+        indexes: vec![
+            ("node_names_inode_idx", "CREATE INDEX IF NOT EXISTS `node_names_inode_idx` ON `node_name` (`inode`);"),
+            ("node_names_parent_idx", "CREATE INDEX IF NOT EXISTS `node_names_parent_idx` ON `node_name` (`parent`);"),
+            ("node_names_uniq_idx", "CREATE UNIQUE INDEX IF NOT EXISTS `node_names_uniq_idx` ON `node_name` (`inode`, `parent`, `name`);")
         ]
+    });
+    v1_schema.push(SchemaItem {
+        table: (
+            "node_view",
+            "CREATE VIEW IF NOT EXISTS `node_view` AS SELECT\
+            `node_meta`.`inode`,\
+            `node_meta`.`obj_uuid`,\
+            `node_meta`.`obj_type`,\
+            `node_meta`.`file_type`,\
+            `node_meta`.`mtime`,\
+            `node_meta`.`ctime`,\
+            `node_meta`.`crtime`,\
+            `node_name`.`parent`,\
+            `node_name`.`hidden`,\
+            `node_name`.`name`\
+            FROM `node_meta` INNER JOIN `node_name` ON (`node_meta`.`inode` = `node_name`.`inode`)",
+        ),
+        indexes: vec![],
     });
 
     for item in v1_schema {
@@ -189,7 +227,7 @@ fn get_schema_version(conn: &Connection) -> SQLResult<i32> {
 fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
     trace!("+{}", stringify!(reserve_inodes));
     let res: rusqlite::Result<i32> = conn.query_row(
-        "SELECT COUNT() FROM `inode` WHERE `inode_num` < ?1 AND `obj_type` != 'R'",
+        "SELECT COUNT() FROM `node_meta` WHERE `inode` < ?1 AND `obj_type` != 'R'",
         params![INODE_MIN],
         |row| row.get(0),
     );
@@ -211,63 +249,98 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
         panic!(msg);
     }
 
+    for inode in 0..INODE_MIN {
+        trace!("Reserving inode number {}", inode);
+        conn.execute(
+            "INSERT OR REPLACE INTO `node_meta` (`inode`, `obj_uuid`, `obj_type`) VALUES \
+            (?1, '00000000-0000-0000-0000-000000000000', 'R')",
+            params![inode],
+        )?;
+    }
+
     trace!("Reserving root inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `inode` (`inode_num`, `parent`, `obj_uuid`, `obj_type`, `file_type`, `name`) VALUES \
-        (?1, ?2, '00000000-0000-0000-0000-000000000000', 'R', 'D', NULL)",
-        params![u64_to_i64(INODE_ROOT), u64_to_i64(INODE_ROOT)],
+        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
+        (?1, 'D')",
+        params![u64_to_i64(INODE_ROOT)],
     )?;
     trace!("Reserving config inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `inode` (`inode_num`, `parent`, `obj_uuid`, `obj_type`, `file_type`, `name`) VALUES \
-        (?1, ?2, '00000000-0000-0000-0000-000000000000', 'R', 'F', 'datavir.toml')",
+        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
+        (?1, 'F')",
+        params![u64_to_i64(INODE_CONFIG)],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO `node_name` (`inode`, `parent`, `hidden`, `name`) VALUES \
+        (?1, ?2, 0, 'datavir.toml')",
         params![u64_to_i64(INODE_CONFIG), u64_to_i64(INODE_ROOT)],
     )?;
     trace!("Reserving socket inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `inode` (`inode_num`, `parent`, `obj_uuid`, `obj_type`, `file_type`, `name`) VALUES \
-        (?1, ?2, '00000000-0000-0000-0000-000000000000', 'R', 'S', '.datavir.socket')",
+        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
+        (?1, 'S')",
+        params![u64_to_i64(INODE_SOCKET)],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO `node_name` (`inode`, `parent`, `hidden`, `name`) VALUES \
+        (?1, ?2, 0, '.datavir.socket')",
         params![u64_to_i64(INODE_SOCKET), u64_to_i64(INODE_ROOT)],
     )?;
     trace!("Reserving status inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `inode` (`inode_num`, `parent`, `obj_uuid`, `obj_type`, `file_type`, `name`) VALUES \
-        (?1, ?2, '00000000-0000-0000-0000-000000000000', 'R', 'F', '.datavir.status')",
+        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
+        (?1, 'F')",
+        params![u64_to_i64(INODE_STATUS_FILE)],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO `node_name` (`inode`, `parent`, `hidden`, `name`) VALUES \
+        (?1, ?2, 0, '.datavir.status')",
         params![u64_to_i64(INODE_STATUS_FILE), u64_to_i64(INODE_ROOT)],
     )?;
     trace!("Reserving volumes inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `inode` (`inode_num`, `parent`, `obj_uuid`, `obj_type`, `file_type`, `name`) VALUES \
-        (?1, ?2, '00000000-0000-0000-0000-000000000000', 'R', 'D', 'Volumes')",
+        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
+        (?1, 'D')",
+        params![u64_to_i64(INODE_VOLUMES_DIR)],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO `node_name` (`inode`, `parent`, `hidden`, `name`) VALUES \
+        (?1, ?2, 0, 'Volumes')",
         params![u64_to_i64(INODE_VOLUMES_DIR), u64_to_i64(INODE_ROOT)],
     )?;
     trace!("Reserving all bundles inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `inode` (`inode_num`, `parent`, `obj_uuid`, `obj_type`, `file_type`, `name`) VALUES \
-        (?1, ?2, '00000000-0000-0000-0000-000000000000', 'R', 'D', 'All Bundles')",
+        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
+        (?1, 'D')",
+        params![u64_to_i64(INODE_ALL_BUNDLES_DIR)],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO `node_name` (`inode`, `parent`, `hidden`, `name`) VALUES \
+        (?1, ?2, 0, 'All Bundles')",
         params![u64_to_i64(INODE_ALL_BUNDLES_DIR), u64_to_i64(INODE_ROOT)],
     )?;
     trace!("Reserving all filters inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `inode` (`inode_num`, `parent`, `obj_uuid`, `obj_type`, `file_type`, `name`) VALUES \
-        (?1, ?2, '00000000-0000-0000-0000-000000000000', 'R', 'D', 'All Filters')",
+        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
+        (?1, 'D')",
+        params![u64_to_i64(INODE_ALL_FILTERS_DIR)],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO `node_name` (`inode`, `parent`, `hidden`, `name`) VALUES \
+        (?1, ?2, 0, 'All Filters')",
         params![u64_to_i64(INODE_ALL_FILTERS_DIR), u64_to_i64(INODE_ROOT)],
     )?;
     trace!("Reserving trash inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `inode` (`inode_num`, `parent`, `obj_uuid`, `obj_type`, `file_type`, `name`) VALUES \
-        (?1, ?2, '00000000-0000-0000-0000-000000000000', 'R', 'D', 'Trash')",
+        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
+        (?1, 'D')",
+        params![u64_to_i64(INODE_TRASH_DIR)],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO `node_name` (`inode`, `parent`, `hidden`, `name`) VALUES \
+        (?1, ?2, 0, 'Trash')",
         params![u64_to_i64(INODE_TRASH_DIR), u64_to_i64(INODE_ROOT)],
     )?;
-
-    for inode_num in INODE_START_EMPTY_RESERVATIONS..INODE_MIN {
-        trace!("Reserving inode number {}", inode_num);
-        conn.execute(
-            "INSERT OR REPLACE INTO `inode` (`inode_num`, `parent`, `obj_uuid`, `obj_type`, `name`) VALUES \
-            (?1, 0, '00000000-0000-0000-0000-000000000000', 'R', NULL)",
-            params![inode_num],
-        )?;
-    }
 
     debug!("Reserved special inodes");
     trace!("-{} -> Ok", stringify!(reserve_inodes));
