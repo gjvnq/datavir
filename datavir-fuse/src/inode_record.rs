@@ -330,43 +330,37 @@ impl INodeRecord {
             Some(s) => file_type2string(s),
             None => "-",
         };
+        let mut params = Vec::<&dyn rusqlite::ToSql>::new();
         if path.is_some() {
-            sql += " AND `path` = ?1";
-        } else {
-            sql += " AND (1 = 1 OR `path` = ?1)";
+            params.push(&path);
+            sql += &format!(" AND `path` = ?{}", params.len());
         }
         if obj_type.is_some() {
-            sql += " AND `obj_type` = ?2";
-        } else {
-            sql += " AND (1 = 1 OR `obj_type` = ?2)";
+            params.push(&obj_type);
+            sql += &format!(" AND `obj_type` = ?{}", params.len());
         }
         if obj_uuid.is_some() {
-            sql += " AND `obj_uuid` = ?3";
-        } else {
-            sql += " AND (1 = 1 OR `obj_uuid` = ?3)";
+            params.push(&obj_uuid);
+            sql += &format!(" AND `obj_uuid` = ?{}", params.len());
         }
         if file_type.is_some() {
-            sql += " AND `file_type` = ?4";
-        } else {
-            sql += " AND (1 = 1 OR `file_type` = ?4)";
+            params.push(&file_type2);
+            sql += &format!(" AND `file_type` = ?{}", params.len());
         }
         debug!("{:?}", sql);
-        let res = tx.query_row(
-            &sql,
-            params![path, obj_type, obj_uuid, file_type2],
-            |row| {
-                Ok(INodeRecord::new_sql(
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                    row.get(7)?,
-                ))
-            }, // |row| Ok(INodeRecord::new_sql(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, 0,0,0,))
-        );
+        debug!("{:?}", params.len());
+        let res = tx.query_row(&sql, params, |row| {
+            Ok(INodeRecord::new_sql(
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+            ))
+        });
         match res {
             Ok(v) => {
                 trace!("-{} -> {:?}", trace_msg, v);
