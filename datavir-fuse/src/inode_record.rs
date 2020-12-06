@@ -11,6 +11,7 @@ use uuid::Uuid;
 #[allow(unused_imports)]
 use std::time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH};
 
+pub const INODE_NULL: u64 = 0;
 pub const INODE_ROOT: u64 = 1;
 pub const INODE_CONFIG: u64 = 2;
 pub const INODE_SOCKET: u64 = 3;
@@ -19,7 +20,6 @@ pub const INODE_VOLUMES_DIR: u64 = 5;
 pub const INODE_ALL_BUNDLES_DIR: u64 = 6;
 pub const INODE_ALL_FILTERS_DIR: u64 = 7;
 pub const INODE_TRASH_DIR: u64 = 8;
-pub const INODE_START_EMPTY_RESERVATIONS: i64 = 8;
 
 pub const INODE_MIN: i64 = 64;
 
@@ -118,231 +118,357 @@ fn file_type2string(kind: FileType) -> &'static str {
 }
 
 #[derive(Debug, Clone)]
-pub struct INodeRecord {
-    inode_num: Option<u64>,
+pub struct NodeName {
+    inode: u64,
     parent: u64,
-    obj_uuid: Uuid,
-    obj_type: ObjectType,
-    file_type: FileType,
+    /// This hidden IS NOT the `.` on the begining of filenames nor the NTFS hidden file attribute.
+    hidden: bool,
     name: String,
-    mtime: SystemTime,
-    ctime: SystemTime,
-    crtime: SystemTime,
+    file_type: Option<FileType>,
 }
 
-impl INodeRecord {
-    pub fn get_inode_num(&self) -> Option<u64> {
-        self.inode_num
+impl NodeName {
+    #[allow(dead_code)]
+    pub fn new(inode: u64, parent: u64, hidden: bool, name: String) -> NodeName {
+        NodeName {
+            inode: inode,
+            parent: parent,
+            hidden: hidden,
+            name: name,
+            file_type: None,
+        }
     }
+    fn from_row(row: &rusqlite::Row) -> DVResult<NodeName> {
+        Ok(NodeName {
+            inode: i64_to_u64(row.get(0)?),
+            parent: i64_to_u64(row.get(1)?),
+            hidden: row.get(2)?,
+            name: row.get(3)?,
+            file_type: Some(string2file_type(&row.get::<usize, String>(4)?)?),
+        })
+    }
+    pub fn get_inode(&self) -> u64 {
+        self.inode
+    }
+    fn get_inode_i64(&self) -> i64 {
+        u64_to_i64(self.inode)
+    }
+    #[allow(dead_code)]
     pub fn get_parent(&self) -> u64 {
         self.parent
     }
-    pub fn get_obj_uuid(&self) -> Uuid {
-        self.obj_uuid
+    fn get_parent_i64(&self) -> i64 {
+        u64_to_i64(self.parent)
     }
-    pub fn get_obj_type(&self) -> ObjectType {
-        self.obj_type
-    }
-    pub fn get_file_type(&self) -> FileType {
-        self.file_type
-    }
-    pub fn get_name_str(&self) -> &str {
-        self.name.as_str()
+    #[allow(dead_code)]
+    pub fn get_hidden(&self) -> bool {
+        self.hidden
     }
     pub fn get_name(&self) -> String {
         self.name.clone()
     }
+    pub fn get_file_type(&self) -> Option<FileType> {
+        self.file_type
+    }
+    #[allow(dead_code)]
+    pub fn save(&self, db_mutex: &Mutex<()>, tx: &Transaction) -> DVResult<()> {
+        let res;
+        {
+            let _v = db_mutex.lock().unwrap();
+            res = tx.execute(
+                "INSERT OR REPLACE INTO `node_name` (`inode`, `parent`, `hidden`, `name`) VALUES \
+                (?, ?, ?, ?)",
+                params![
+                    self.get_inode_i64(),
+                    self.get_parent_i64(),
+                    self.hidden,
+                    self.name
+                ],
+            );
+        }
+        match res {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                error!("Failed to save NodeName ({:?}): {:?}", self, err);
+                Err(DVError::SQLError(err))
+            }
+        }
+    }
+    pub fn find<'ans, 'db: 'ans>(
+        parent: u64,
+        include_hidden: bool,
+        conn: &'db rusqlite::Connection,
+    ) -> DVResult<NodeNameIter<'ans>> {
+        let mut sql = "SELECT `inode`, `parent`, `hidden`, `name`, `file_type` FROM `node_view` WHERE `parent` = ?1".to_string();
+        if include_hidden == false {
+            sql += " AND `hidden` = 0"
+        }
+        let stmt = match conn.prepare(&sql) {
+            Ok(v) => v,
+            Err(err) => {
+                error!(
+                    "-NodeName::find(parent: {}, sql: {}) Failed to prepare statement: {:?}",
+                    parent, sql, err
+                );
+                return Err(DVError::from(err));
+            }
+        };
+        let mut ans = NodeNameIter {
+            pos: 0,
+            parent: parent,
+            stmt: Box::new(stmt),
+            rows: MaybeUninit::uninit(),
+        };
+        ans.rows = MaybeUninit::new(
+            match fuck_mut(&mut ans.stmt).query(params![u64_to_i64(parent)]) {
+                Ok(v) => v,
+                Err(err) => {
+                    error!(
+                        "-NodeName::find(parent: {}, sql: {}) Failed to run statement: {:?}",
+                        parent, sql, err
+                    );
+                    return Err(DVError::from(err));
+                }
+            },
+        );
+        Ok(ans)
+    }
+
+    #[allow(dead_code)]
+    pub fn del(&self, tx: &Transaction) -> DVResult<()> {
+        let res = tx.execute(
+            "DELETE FROM `node_name` WHERE `inode` = ?1 AND `parent` = ?2 AND `name` = ?3",
+            params![self.get_inode_i64(), self.get_parent_i64(), self.name],
+        );
+        match res {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                error!("Failed to delete NodeName ({:?}): {:?}", self, err);
+                Err(DVError::SQLError(err))
+            }
+        }
+    }
+}
+
+pub struct NodeNameIter<'a> {
+    pos: u64,
+    parent: u64,
+    stmt: Box<rusqlite::Statement<'a>>,
+    rows: MaybeUninit<rusqlite::Rows<'a>>,
+}
+
+impl std::fmt::Debug for NodeNameIter<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        f.debug_struct("NodeNameIter")
+            .field("parent", &self.parent)
+            .field("pos", &self.pos)
+            .finish()
+    }
+}
+
+impl<'a> NodeNameIter<'a> {
+    fn get_rows(&mut self) -> &mut rusqlite::Rows<'a> {
+        unsafe { &mut *self.rows.as_mut_ptr() }
+    }
+
+    fn try_next(&mut self) -> DVResult<NodeName> {
+        let row = match self.get_rows().next() {
+            Ok(v) => v,
+            Err(err) => {
+                error!(
+                    "-NodeNameIter::try_next(self={:?}) Failed to get next row: {:?}",
+                    self, err
+                );
+                return Err(DVError::from(err));
+            }
+        };
+        if let Some(row) = row {
+            let ans = NodeName::from_row(row);
+            if ans.is_ok() {
+                self.pos += 1;
+            }
+            ans
+        } else {
+            Err(DVError::NoMoreResults)
+        }
+    }
+}
+
+impl Iterator for NodeNameIter<'_> {
+    type Item = NodeName;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let ans = self.try_next();
+            match ans {
+                Ok(name) => return Some(name),
+                Err(err) => match err {
+                    DVError::NoMoreResults => return None,
+                    _ => {
+                        error!("NodeNameIter::next({:?}): {:?}", self, err);
+                    }
+                },
+            };
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NodeRecord {
+    inode: u64,
+    obj_uuid: Uuid,
+    obj_type: ObjectType,
+    file_type: FileType,
+    mtime: SystemTime,
+    ctime: SystemTime,
+    crtime: SystemTime,
+    names: Option<Vec<NodeName>>,
+}
+
+impl NodeRecord {
+    #[allow(dead_code)]
+    pub fn get_inode(&self) -> u64 {
+        self.inode
+    }
+    #[allow(dead_code)]
+    pub fn get_obj_uuid(&self) -> Uuid {
+        self.obj_uuid
+    }
+    #[allow(dead_code)]
+    pub fn get_obj_type(&self) -> ObjectType {
+        self.obj_type
+    }
+    #[allow(dead_code)]
+    pub fn get_file_type(&self) -> FileType {
+        self.file_type
+    }
+    #[allow(dead_code)]
+    pub fn get_names(&self) -> Option<&Vec<NodeName>> {
+        self.names.as_ref()
+    }
 
     fn new(
-        num: Option<u64>,
-        parent: u64,
+        num: u64,
         uuid: Uuid,
         obj_type: ObjectType,
         file_type: FileType,
-        name: String,
         mtime: SystemTime,
         ctime: SystemTime,
         crtime: SystemTime,
     ) -> Self {
-        INodeRecord {
-            inode_num: num,
-            parent: parent,
+        NodeRecord {
+            inode: num,
             obj_uuid: uuid,
             obj_type: obj_type,
             file_type: file_type,
-            name: name,
             mtime: mtime,
             ctime: ctime,
             crtime: crtime,
+            names: None,
         }
     }
 
-    fn new_sql(
-        num: i64,
-        parent: i64,
-        uuid: String,
-        obj_type: ObjectType,
-        file_type: String,
-        name: String,
-        mtime: i64,
-        ctime: i64,
-        crtime: i64,
-    ) -> DVResult<Self> {
-        let num = i64_to_u64(num);
-        let parent = i64_to_u64(parent);
-        let mtime = sql2time(mtime)?;
-        let ctime = sql2time(ctime)?;
-        let crtime = sql2time(crtime)?;
-        let file_type = string2file_type(&file_type)?;
-        let uuid = parse_uuid(&uuid)?;
+    fn from_row(row: &rusqlite::Row) -> DVResult<Self> {
+        let inode = i64_to_u64(row.get(0)?);
+        let obj_uuid = parse_uuid(&row.get::<_, String>(1)?)?;
+        let obj_type = row.get(2)?;
+        let file_type = string2file_type(&row.get::<_, String>(3)?)?;
+        let mtime = sql2time(row.get(4)?)?;
+        let ctime = sql2time(row.get(5)?)?;
+        let crtime = sql2time(row.get(6)?)?;
 
-        Ok(INodeRecord::new(
-            Some(num),
-            parent,
-            uuid,
-            obj_type,
-            file_type,
-            name,
-            mtime,
-            ctime,
-            crtime,
+        Ok(NodeRecord::new(
+            inode, obj_uuid, obj_type, file_type, mtime, ctime, crtime,
         ))
     }
 
     #[allow(dead_code)]
-    pub fn new_now(
-        num: Option<u64>,
-        parent: u64,
-        uuid: Uuid,
-        obj_type: ObjectType,
-        file_type: FileType,
-        name: String,
-    ) -> Self {
+    pub fn new_now(inode: u64, uuid: Uuid, obj_type: ObjectType, file_type: FileType) -> Self {
         let now = SystemTime::now();
-        INodeRecord::new(num, parent, uuid, obj_type, file_type, name, now, now, now)
+        NodeRecord::new(inode, uuid, obj_type, file_type, now, now, now)
+    }
+
+    fn get_inode_i64(&self) -> i64 {
+        u64_to_i64(self.inode)
     }
 
     #[allow(dead_code)]
-    pub fn new_now_next(
-        uuid: Uuid,
-        parent: u64,
-        obj_type: ObjectType,
-        file_type: FileType,
-        inode_next: &AtomicU64,
-        name: String,
-    ) -> Self {
-        let now = SystemTime::now();
-        let num = get_next_inode(inode_next);
-        INodeRecord::new(
-            Some(num),
-            parent,
-            uuid,
-            obj_type,
-            file_type,
-            name,
-            now,
-            now,
-            now,
-        )
-    }
-
-    fn get_inode_i64(&self) -> DVResult<i64> {
-        match self.inode_num {
-            Some(num) => Ok(u64_to_i64(num)),
-            None => {
-                error!("INode has no number: {:?}", self);
-                Err(DVError::INodeNoNum(format!("{:?}", self)))
-            }
-        }
-    }
-
-    fn ensure_id(&mut self, inode_next: &AtomicU64) {
-        if self.inode_num.is_none() {
-            self.inode_num = Some(get_next_inode(inode_next));
-            trace!("~INodeRecord::ensure_id(self={:?})", self);
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn insert(&mut self, inode_next: &AtomicU64, tx: &Transaction) -> DVResult<()> {
-        trace!("+INodeRecord::insert(self={:?})", self);
-        self.ensure_id(inode_next);
+    pub fn save(&mut self, db_mutex: &Mutex<()>, tx: &Transaction) -> DVResult<()> {
+        trace!("+NodeRecord::save(self={:?})", self);
         let now = SystemTime::now();
         let now_unix = time2sql(now)?;
-        let inode_num = self.get_inode_i64()?;
-        let res = tx.execute(
-            "INSERT OR REPLACE INTO `inode` (`inode_num`, `obj_uuid`, `obj_type`, `file_type`, `name`, `ctime`, `mtime`, `crtime`) VALUES \
-        (?, ?, ?, ?, ?)",
-            params![
-                inode_num, self.obj_uuid, self.obj_type, file_type2string(self.file_type), self.name, now_unix, now_unix, now_unix]);
+        let had_inode = self.inode == INODE_NULL;
+        let sql = match had_inode {
+            true => "INSERT INTO `node_meta` (`obj_uuid`, `obj_type`, `file_type`, `ctime`, `mtime`, `crtime`) VALUES \
+                    (?, ?, ?, ?, ?, ?)",
+            false => "REPLACE INTO `node_meta` (`inode`, `obj_uuid`, `obj_type`, `file_type`, `ctime`) VALUES \
+                    (?, ?, ?, ?, ?)",
+        };
+        let file_type_str = file_type2string(self.file_type);
+        let inode = self.get_inode_i64();
+        let params: Vec<&dyn rusqlite::ToSql>;
+        params = match had_inode {
+            true => vec![
+                &self.obj_uuid,
+                &self.obj_type,
+                &file_type_str,
+                &now_unix,
+                &now_unix,
+                &now_unix,
+            ],
+            false => vec![
+                &inode,
+                &self.obj_uuid,
+                &self.obj_type,
+                &file_type_str,
+                &now_unix,
+            ],
+        };
+        let res;
+        let new_inode;
+        {
+            let _v = db_mutex.lock().unwrap();
+            res = tx.execute(sql, params);
+            new_inode = tx.last_insert_rowid();
+        }
         if let Err(err) = res {
-            error!("Failed to update metadata for INodeRecord: {:?}", err);
-            trace!("-INodeRecord::insert(self={:?}) -> {:?}", self, err);
-            Err(DVError::SQLError(err))
-        } else {
-            self.ctime = now;
+            error!("Failed to update metadata for NodeRecord: {:?}", err);
+            trace!("-NodeRecord::save(self={:?}) -> {:?}", self, err);
+            return Err(DVError::SQLError(err));
+        }
+        self.ctime = now;
+        if !had_inode {
             self.mtime = now;
             self.crtime = now;
-            trace!("-INodeRecord::insert(self={:?}) -> Ok", self);
-            Ok(())
+            self.inode = i64_to_u64(new_inode);
         }
-    }
-
-    #[allow(dead_code)]
-    // if new_name is None, it won't be changed
-    pub fn update_metadata(&mut self, new_name: Option<&str>, tx: &Transaction) -> DVResult<()> {
-        trace!("+INodeRecord::update_metadata(self={:?})", self);
-        let now = SystemTime::now();
-        let now_unix = time2sql(now)?;
-        let sql = match new_name {
-            Some(_) => "UPDATE `inode` SET `ctime` = ?1, `name` = ?2 WHERE `inode_num` = ?3",
-            None => "UPDATE `inode` SET `ctime` = ?1, WHERE `inode_num` = ?3",
-        };
-        let inode_num = self.get_inode_i64()?;
-        let res = tx.execute(sql, params![now_unix, new_name, inode_num]);
-        if let Err(err) = res {
-            error!("Failed to update metadata for INodeRecord: {:?}", err);
-            trace!(
-                "-INodeRecord::update_metadata(self={:?}) -> {:?}",
-                self,
-                err
-            );
-            Err(DVError::SQLError(err))
-        } else {
-            self.ctime = now;
-            if let Some(new_name) = new_name {
-                self.name = new_name.to_string();
-            }
-            debug!("Updated metadata for {:?}", self);
-            trace!("-INodeRecord::update_metadata(self={:?}) -> Ok", self);
-            Ok(())
-        }
+        trace!("-NodeRecord::save(self={:?}) -> Ok", self);
+        Ok(())
     }
 
     #[allow(dead_code)]
     // should be called when the file contents are changed
     pub fn update_mtime(&mut self, tx: &Transaction) -> DVResult<()> {
-        trace!("+INodeRecord::update_mtime(self={:?})", self);
+        trace!("+NodeRecord::update_mtime(self={:?})", self);
+        let inode = self.get_inode_i64();
+        if inode == 0 {
+            trace!("-NodeRecord::update_mtime(self={:?}) -> NodeNoNum", self);
+            return Err(DVError::NodeNoNum);
+        }
         let now = SystemTime::now();
         let now_unix = time2sql(now)?;
-        let inode_num = self.get_inode_i64()?;
         let res = tx.execute(
-            "INSERT OR REPLACE INTO `inode` (`inode_num`, `mtime`) (?1, ?2)",
-            params![inode_num, now_unix],
+            "UPDATE `inode` SET `mtime` = ?2 WHERE `inode` = ?1",
+            params![inode, now_unix],
         );
         if let Err(err) = res {
-            error!("Failed to update metadata for INodeRecord: {:?}", err);
-            trace!(
-                "-{}(self={:?}) -> {:?}",
-                stringify!(INodeRecord::update_mtime),
-                self,
-                err
-            );
+            error!("Failed to update mtime for NodeRecord: {:?}", err);
+            trace!("-NodeRecord::update_mtime(self={:?}) -> {:?}", self, err);
             Err(DVError::SQLError(err))
         } else {
             self.mtime = now;
             debug!("Updated mtime for {:?}", self);
-            trace!("-INodeRecord::update_mtime(self={:?}) -> Ok", self);
+            trace!("-NodeRecord::update_mtime(self={:?}) -> Ok", self);
             Ok(())
         }
     }
@@ -357,10 +483,10 @@ impl INodeRecord {
         limit: Option<u64>,
         offset: Option<i64>,
         tx: &Transaction,
-    ) -> DVResult<Vec<INodeRecord>> {
-        let trace_msg = format!("INodeRecord::search(parent={:?}, name={:?}, obj_type={:?}, obj_uuid={:?}, file_type={:?}", parent, name, obj_type, obj_uuid, file_type);
+    ) -> DVResult<Vec<NodeRecord>> {
+        let trace_msg = format!("NodeRecord::search(parent={:?}, name={:?}, obj_type={:?}, obj_uuid={:?}, file_type={:?}", parent, name, obj_type, obj_uuid, file_type);
         trace!("+{}", trace_msg);
-        let mut sql = "SELECT `inode_num`, `parent`, `obj_uuid`, `obj_type`, `file_type`, `name`, `mtime`, `ctime`, `crtime` FROM `inode` WHERE 1 = 1".to_string();
+        let mut sql = "SELECT `inode`, `parent`, `obj_uuid`, `obj_type`, `file_type`, `name`, `mtime`, `ctime`, `crtime` FROM `node_meta` WHERE 1 = 1".to_string();
         let file_type2 = match file_type {
             Some(s) => file_type2string(s),
             None => "-",
@@ -393,7 +519,7 @@ impl INodeRecord {
             sql += &format!(" AND `file_type` = ?{}", params.len());
         }
         if offset.is_some() {
-            sql += " ORDER BY `inode_num` ASC";
+            sql += " ORDER BY `inode` ASC";
         }
         if let Some(limit) = limit {
             sql += &format!(" LIMIT {}", limit);
@@ -411,17 +537,7 @@ impl INodeRecord {
         let mut last_err: Option<DVError> = None;
 
         while let Some(row) = rows.next()? {
-            let node = INodeRecord::new_sql(
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-                row.get(6)?,
-                row.get(7)?,
-                row.get(8)?,
-            );
+            let node = NodeRecord::from_row(row);
             match node {
                 Ok(node) => ans.push(node),
                 Err(err) => {
@@ -448,8 +564,8 @@ impl INodeRecord {
         obj_uuid: Option<Uuid>,
         file_type: Option<FileType>,
         tx: &Transaction,
-    ) -> DVResult<INodeRecord> {
-        match INodeRecord::search(
+    ) -> DVResult<NodeRecord> {
+        match NodeRecord::search(
             parent,
             name,
             obj_type,
@@ -471,49 +587,41 @@ impl INodeRecord {
     }
 
     #[allow(dead_code)]
-    pub fn get(inode_num: u64, tx: &Transaction) -> DVResult<INodeRecord> {
-        trace!("+INodeRecord::get(inode_num={})", inode_num);
+    pub fn get(inode: u64, tx: &Transaction) -> DVResult<NodeRecord> {
+        trace!("+NodeRecord::get(inode={})", inode);
         let res = tx.query_row(
-        "SELECT `inode_num`, `parent`, `obj_uuid`, `obj_type`, `file_type`, `name`, `mtime`, `ctime`, `crtime` FROM `inode` WHERE `inode_num` = ?1",
-        params![u64_to_i64(inode_num)],
-        |row| Ok(INodeRecord::new_sql(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?))
+        "SELECT `inode`, `obj_uuid`, `obj_type`, `file_type`, `name`, `mtime`, `ctime`, `crtime` FROM `node_meta` WHERE `inode` = ?1",
+        params![u64_to_i64(inode)],
+        |row| Ok(NodeRecord::from_row(row))
     );
         match res {
             Ok(v) => {
-                trace!(
-                    "-{}(inode_num={}) -> {:?}",
-                    stringify!(inode_get),
-                    inode_num,
-                    v
-                );
+                trace!("-{}(inode={}) -> {:?}", stringify!(inode_get), inode, v);
                 v
             }
             Err(err) => {
-                error!("Failed to get inode {} from database: {:?}", inode_num, err);
-                trace!("-INodeRecord::get(inode_num={}) -> {:?}", inode_num, err);
+                error!("Failed to get inode {} from database: {:?}", inode, err);
+                trace!("-NodeRecord::get(inode={}) -> {:?}", inode, err);
                 Err(DVError::SQLError(err))
             }
         }
     }
 
     #[allow(dead_code)]
-    pub fn del(inode_num: u64, tx: &Transaction) -> SQLResult<()> {
-        trace!("+INodeRecord::del(inode_num={})", inode_num);
+    pub fn del(inode: u64, tx: &Transaction) -> SQLResult<()> {
+        trace!("+NodeRecord::del(inode={})", inode);
         let res = tx.execute(
-            "DELETE FROM `inode` WHERE `inode_num` = ?1",
-            params![u64_to_i64(inode_num)],
+            "DELETE FROM `node_meta` WHERE `inode` = ?1",
+            params![u64_to_i64(inode)],
         );
         match res {
             Ok(_) => {
-                trace!("+INodeRecord::del(inode_num={}) -> Ok", inode_num);
+                trace!("+NodeRecord::del(inode={}) -> Ok", inode);
                 Ok(())
             }
             Err(err) => {
-                error!(
-                    "Failed to delete inode {} from database: {:?}",
-                    inode_num, err
-                );
-                trace!("+INodeRecord::del(inode_num={}) -> {:?}", inode_num, err);
+                error!("Failed to delete inode {} from database: {:?}", inode, err);
+                trace!("+NodeRecord::del(inode={}) -> {:?}", inode, err);
                 Err(err)
             }
         }
@@ -546,15 +654,15 @@ impl INodeRecord {
 
 pub fn set_inode_counter(conn: &Connection, inode_next: &AtomicU64) -> Result<(), rusqlite::Error> {
     trace!("+{}", stringify!(set_inode_counter));
-    let inode_num = get_highest_inode(conn);
-    if let Err(err) = inode_num {
+    let inode = get_highest_inode(conn);
+    if let Err(err) = inode {
         error!("Failed to set INODE_NEXT: {:?}", err);
         trace!("-{} -> {:?}", stringify!(set_inode_counter), err);
         return Err(err);
     }
-    let inode_num = inode_num.unwrap();
-    inode_next.store(inode_num + 1, Ordering::SeqCst);
-    debug!("Set INODE_NEXT to {}", inode_num);
+    let inode = inode.unwrap();
+    inode_next.store(inode + 1, Ordering::SeqCst);
+    debug!("Set INODE_NEXT to {}", inode);
     trace!("-{}", stringify!(set_inode_counter));
     return Ok(());
 }
@@ -562,18 +670,18 @@ pub fn set_inode_counter(conn: &Connection, inode_next: &AtomicU64) -> Result<()
 fn get_highest_inode(conn: &Connection) -> Result<u64, rusqlite::Error> {
     trace!("+{}", stringify!(get_highest_inode));
     // This weird code is because I want u64 but SQLite only stores i64
-    let res_max = conn.query_row("SELECT MAX(`inode_num`) FROM `inode`", params![], |row| {
+    let res_max = conn.query_row("SELECT MAX(`inode`) FROM `node_meta`", params![], |row| {
         Ok(row.get(0)?)
     });
     if let Err(err) = res_max {
-        error!("Failed to get MAX(`inode_num`): {:?}", err);
+        error!("Failed to get MAX(`inode`): {:?}", err);
         return Err(err);
     }
-    let res_min = conn.query_row("SELECT MIN(`inode_num`) FROM `inode`", params![], |row| {
+    let res_min = conn.query_row("SELECT MIN(`inode`) FROM `node_meta`", params![], |row| {
         Ok(row.get(0)?)
     });
     if let Err(err) = res_min {
-        error!("Failed to get MIN(`inode_num`): {:?}", err);
+        error!("Failed to get MIN(`inode`): {:?}", err);
         return Err(err);
     }
 
@@ -586,8 +694,4 @@ fn get_highest_inode(conn: &Connection) -> Result<u64, rusqlite::Error> {
         trace!("-{} -> {}", stringify!(get_highest_inode), b);
         Ok(b)
     }
-}
-
-fn get_next_inode(inode_next: &AtomicU64) -> u64 {
-    inode_next.fetch_add(1, Ordering::SeqCst)
 }

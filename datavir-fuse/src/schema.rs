@@ -3,7 +3,7 @@ use crate::inode_record::u64_to_i64;
 use crate::inode_record::INODE_MIN;
 use crate::inode_record::{
     INODE_ALL_BUNDLES_DIR, INODE_ALL_FILTERS_DIR, INODE_CONFIG, INODE_ROOT, INODE_SOCKET,
-    INODE_START_EMPTY_RESERVATIONS, INODE_STATUS_FILE, INODE_TRASH_DIR, INODE_VOLUMES_DIR,
+    INODE_STATUS_FILE, INODE_TRASH_DIR, INODE_VOLUMES_DIR,
 };
 use crate::prelude::*;
 use core::sync::atomic::AtomicU64;
@@ -102,7 +102,7 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
         table: (
             "node_meta",
             "CREATE TABLE IF NOT EXISTS `node_meta` (\
-            `inode` INTEGER PRIMARY KEY,\
+            `inode` INTEGER PRIMARY KEY ASC,\
             `obj_uuid` CHAR(36),\
             `obj_type` VARCHAR(20),\
             `file_type` VARCHAR(1),\

@@ -1,11 +1,16 @@
 pub use log::{debug, error, info, trace, warn};
 
+pub use core::cell::RefCell;
 pub use std::fs;
 pub use std::io::Error as IOError;
 pub use std::io::ErrorKind as IOErrorKind;
 pub use std::io::Result as IOResult;
+pub use std::mem::MaybeUninit;
 pub use std::panic;
 pub use std::path::{Path, PathBuf};
+pub use std::ptr::NonNull;
+pub use std::sync::Arc;
+pub use std::sync::Mutex;
 pub use std::time::SystemTimeError;
 
 pub use rusqlite::params;
@@ -26,9 +31,10 @@ pub enum DVError {
     SystemTimeError(SystemTimeError),
     TimeConversionErrorFromSecs(u64),
     FuseTypeParseError(String),
-    INodeNoNum(String),
+    NodeNoNum,
     UuidParseError(String),
     NotImplemented,
+    NoMoreResults,
 }
 
 pub type DVResult<T> = Result<T, DVError>;
@@ -74,6 +80,15 @@ pub fn parse_uuid(val: &str) -> DVResult<Uuid> {
         Ok(v) => Ok(v),
         Err(_) => Err(DVError::UuidParseError(val.to_string())),
     }
+}
+
+#[allow(dead_code)]
+pub fn fuck_ref<'a, T>(ptr: &T) -> &'a T {
+    unsafe { &*(ptr as *const T) }
+}
+#[allow(dead_code)]
+pub fn fuck_mut<'a, T>(ptr: &mut T) -> &'a mut T {
+    unsafe { &mut *(ptr as *mut T) }
 }
 
 // From https://gist.github.com/nelsonsar/549f7167aa2091afafa5

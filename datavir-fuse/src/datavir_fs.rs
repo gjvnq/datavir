@@ -1,4 +1,5 @@
-use crate::inode_record::INodeRecord;
+use crate::inode_record::NodeName;
+use crate::inode_record::NodeRecord;
 use crate::inode_record::INODE_MIN;
 use crate::inode_record::INODE_ROOT;
 use crate::open_database;
@@ -12,19 +13,23 @@ use fuser::{
 };
 use libc::ENOENT;
 use std::ffi::OsStr;
+use std::marker::PhantomData;
 
 #[allow(dead_code)]
 #[derive(Debug)]
-pub struct DataVirFS {
+pub struct DataVirFS<'fs> {
     conn: Connection,
+    /// This mutex is intended only for last_insert_rowid
+    db_mutex: Mutex<()>,
     data_path: PathBuf,
     mount_path: PathBuf,
     mount_opts: Vec<MountOption>,
     inode_next: AtomicU64,
     basic_ttl: Duration,
+    _phantom_data: PhantomData<&'fs ()>,
 }
 
-impl DataVirFS {
+impl<'fs> DataVirFS<'fs> {
     pub fn new(data_path: &Path, mount_path: &Path) -> DVResult<Self> {
         let trace_str = format!(
             "DataVirFS::new(data_path={:?}, mount_path={:?})",
@@ -79,11 +84,13 @@ impl DataVirFS {
         trace!("-{} -> Ok", trace_str);
         Ok(DataVirFS {
             conn: conn,
+            db_mutex: Mutex::new(()),
             data_path: data_path.to_path_buf(),
             mount_path: mount_path.to_path_buf(),
             mount_opts: vec![],
             inode_next: inode_next,
             basic_ttl: Duration::from_secs(1),
+            _phantom_data: PhantomData,
         })
     }
 
@@ -122,42 +129,7 @@ impl DataVirFS {
     fn new_tx(&mut self) -> Transaction {
         self.conn.transaction().unwrap()
     }
-
-    fn find_in_root(&mut self, parent: u64, name: &str) -> DVResult<FileAttr> {
-        let mut name = name;
-        if parent == 1 {
-            name = match name {
-                ".Trash" => "Trash",
-                name => name,
-            };
-        }
-        trace!("{:?}", name);
-        let ans = INodeRecord::find_one(
-            Some(parent),
-            Some(name),
-            Some(ObjectType::Reserved),
-            None,
-            None,
-            &self.new_tx(),
-        );
-        debug!("{:?}", ans);
-        match ans {
-            Ok(v) => Ok(v.to_file_attr(0)),
-            Err(err) => Err(err),
-        }
-    }
-
-    fn lookup(&mut self, _req: &Request, parent: u64, name: &str) -> DVResult<FileAttr> {
-        if parent == 1 {
-            return self.find_in_root(parent, name);
-        }
-        Err(DVError::NotImplemented)
-    }
 }
-
-impl panic::UnwindSafe for DataVirFS {}
-
-impl panic::RefUnwindSafe for DataVirFS {}
 
 fn fmt_request(req: &Request) -> String {
     format!(
@@ -169,7 +141,7 @@ fn fmt_request(req: &Request) -> String {
     )
 }
 
-impl Filesystem for DataVirFS {
+impl<'fs> Filesystem for DataVirFS<'fs> {
     #[allow(unused_variables)]
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let trace_msg = format!(
@@ -187,13 +159,14 @@ impl Filesystem for DataVirFS {
                 return;
             }
         };
-        match DataVirFS::lookup(self, _req, parent, name) {
-            Ok(attr) => reply.entry(&self.basic_ttl, &attr, 0),
-            Err(err) => {
-                trace!("-{} -> {:?}", trace_msg, err);
-                reply.error(i32::from(err));
-            }
-        }
+        reply.error(POSIX_IO_ERROR);
+        // match DataVirFS::lookup(self, _req, parent, name) {
+        //     Ok(attr) => reply.entry(&self.basic_ttl, &attr, 0),
+        //     Err(err) => {
+        //         trace!("-{} -> {:?}", trace_msg, err);
+        //         reply.error(i32::from(err));
+        //     }
+        // }
     }
 
     #[allow(unused_variables)]
@@ -247,16 +220,7 @@ impl Filesystem for DataVirFS {
             }
 
             // The -2 is because of the . and ..
-            let list = INodeRecord::search(
-                Some(ino),
-                None,
-                Some(ObjectType::Reserved),
-                None,
-                None,
-                Some(32),
-                Some(offset - 2),
-                &self.new_tx(),
-            );
+            let list = NodeName::find(ino, false, &self.conn);
             if let Err(err) = list {
                 trace!("-{} -> {:?}", trace_msg, err);
                 reply.error(i32::from(err));
@@ -267,20 +231,14 @@ impl Filesystem for DataVirFS {
                 counter += 1;
                 // The unwrap is safe because the nodes came right form the database
                 if reply.add(
-                    node.get_inode_num().unwrap(),
+                    node.get_inode(),
                     counter,
-                    node.get_file_type(),
+                    node.get_file_type().unwrap(),
                     node.get_name(),
                 ) {
                     break;
                 }
-                debug!(
-                    "{} {} {:?} {:?}",
-                    node.get_inode_num().unwrap(),
-                    0,
-                    node.get_file_type(),
-                    node.get_name()
-                );
+                debug!("{:?}", node);
             }
             reply.ok();
             info!("Replied ROOT");
@@ -288,7 +246,7 @@ impl Filesystem for DataVirFS {
         }
 
         // get inode and check if it is a directory
-        let node = match INodeRecord::get(ino, &self.new_tx()) {
+        let node = match NodeRecord::get(ino, &self.new_tx()) {
             Ok(v) => v,
             Err(err) => {
                 trace!("-{} -> {:?}", trace_msg, err);
