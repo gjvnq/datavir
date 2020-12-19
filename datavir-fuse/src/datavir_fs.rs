@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use crate::inode_record::NodeNameIter;
 use crate::inode_record::NodeName;
 use crate::inode_record::NodeRecord;
 use crate::inode_record::INODE_MIN;
@@ -26,6 +28,7 @@ pub struct DataVirFS<'fs> {
     mount_opts: Vec<MountOption>,
     inode_next: AtomicU64,
     basic_ttl: Duration,
+    fh_name_iter: Mutex<HashMap<u64, NodeNameIter<'fs>>>,
     _phantom_data: PhantomData<&'fs ()>,
 }
 
