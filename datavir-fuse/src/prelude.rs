@@ -91,6 +91,26 @@ pub fn fuck_mut<'a, T>(ptr: &mut T) -> &'a mut T {
     unsafe { &mut *(ptr as *mut T) }
 }
 
+#[inline]
+pub fn i64_to_u64(num: i64) -> u64 {
+    unsafe { std::mem::transmute(num) }
+}
+
+#[inline]
+pub fn u64_to_i64(num: u64) -> i64 {
+    unsafe { std::mem::transmute(num) }
+}
+
+#[inline]
+pub fn i32_to_u32(num: i32) -> u32 {
+    unsafe { std::mem::transmute(num) }
+}
+
+#[inline]
+pub fn u32_to_i32(num: u32) -> i32 {
+    unsafe { std::mem::transmute(num) }
+}
+
 // From https://gist.github.com/nelsonsar/549f7167aa2091afafa5
 #[allow(dead_code)]
 pub const POSIX_NOT_PERMITTED: libc::c_int = libc::EPERM;

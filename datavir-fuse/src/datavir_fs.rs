@@ -1,3 +1,4 @@
+use fuser::ReplyOpen;
 use std::collections::HashMap;
 use crate::inode_record::NodeNameIter;
 use crate::inode_record::NodeName;
@@ -93,6 +94,7 @@ impl<'fs> DataVirFS<'fs> {
             mount_opts: vec![],
             inode_next: inode_next,
             basic_ttl: Duration::from_secs(1),
+            fh_name_iter: Mutex::new(HashMap::new()),
             _phantom_data: PhantomData,
         })
     }
@@ -194,6 +196,44 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
 
     #[allow(unused_variables)]
     #[allow(unused_mut)]
+    fn opendir(
+        &mut self,
+        _req: &Request<'_>,
+        ino: u64,
+        flags: i32,
+        reply: ReplyOpen) {
+        // TODO: see what to do with the flags
+        let trace_msg = format!(
+            "DataVirFS::opendir(_req={}, ino={}, flags={})",
+            fmt_request(_req),
+            ino,
+            flags
+        );
+        trace!("+{}", trace_msg);
+
+        // get inode and check if it is a directory
+        let node = match NodeRecord::get(ino, &self.new_tx()) {
+            Ok(v) => v,
+            Err(err) => {
+                trace!("-{} -> {:?}", trace_msg, err);
+                reply.error(i32::from(err));
+                return;
+            }
+        };
+        if !node.can_readdir(&self.conn) {
+            trace!("-{} -> Not dir", trace_msg);
+            reply.error(POSIX_NOT_A_DIRECTORY);
+            return;
+        }
+        let fh = 0;
+        let reply_flags = 0;
+        reply.opened(fh, reply_flags);
+
+        trace!("-{}", trace_msg);
+    }
+
+    #[allow(unused_variables)]
+    #[allow(unused_mut)]
     fn readdir(
         &mut self,
         _req: &Request,
@@ -209,58 +249,68 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
             offset
         );
         trace!("+{}", trace_msg);
+        let mut offset = offset;
 
-        if ino == INODE_ROOT {
-            if offset == 0 {
-                if reply.add(INODE_ROOT, 1, FileType::Directory, ".") {
-                    reply.ok();
-                    return;
-                }
-                if reply.add(INODE_ROOT, 2, FileType::Directory, "..") {
-                    reply.ok();
-                    return;
-                }
-            }
-
-            // The -2 is because of the . and ..
-            let list = NodeName::find(ino, false, &self.conn);
-            if let Err(err) = list {
-                trace!("-{} -> {:?}", trace_msg, err);
-                reply.error(i32::from(err));
+        if offset == 0 {
+            let full = reply.add(ino, offset, FileType::Directory, ".");
+            if full {
+                reply.ok();
+                trace!("-{}", trace_msg);
                 return;
+            } else {
+                offset += 1;
             }
-            let mut counter = offset;
-            for node in list.unwrap() {
-                counter += 1;
-                // The unwrap is safe because the nodes came right form the database
-                if reply.add(
-                    node.get_inode(),
-                    counter,
-                    node.get_file_type().unwrap(),
-                    node.get_name(),
-                ) {
-                    break;
-                }
-                debug!("{:?}", node);
+        }
+        if offset == 1 {
+            let parent = ino; //TODO: fix this
+            let full = reply.add(parent, offset, FileType::Directory, "..");
+            if full {
+                reply.ok();
+                trace!("-{}", trace_msg);
+                return;
+            } else {
+                offset += 1;
             }
-            reply.ok();
-            info!("Replied ROOT");
-            return;
         }
 
-        // get inode and check if it is a directory
-        let node = match NodeRecord::get(ino, &self.new_tx()) {
-            Ok(v) => v,
-            Err(err) => {
-                trace!("-{} -> {:?}", trace_msg, err);
-                reply.error(i32::from(err));
-                return;
-            }
-        };
-        if node.get_file_type() != FileType::Directory {
-            reply.error(POSIX_NOT_A_DIRECTORY);
+        let list = NodeName::find(ino, false, Some(offset-2), &self.conn);
+        
+        if let Err(err) = list {
+            trace!("-{} -> {:?}", trace_msg, err);
+            reply.error(i32::from(err));
             return;
         }
+        for node in list.unwrap() {
+            offset += 1;
+            // The unwrap is safe because the nodes came right form the database
+            if reply.add(
+                node.get_inode(),
+                offset,
+                node.get_file_type().unwrap(),
+                node.get_name(),
+            ) {
+                break;
+            }
+            debug!("{:?}", node);
+        }
+        reply.ok();
+        trace!("-{} -> OK", trace_msg);
+        info!("Replied dir");
+        // return;
+
+        // // get inode and check if it is a directory
+        // let node = match NodeRecord::get(ino, &self.new_tx()) {
+        //     Ok(v) => v,
+        //     Err(err) => {
+        //         trace!("-{} -> {:?}", trace_msg, err);
+        //         reply.error(i32::from(err));
+        //         return;
+        //     }
+        // };
+        // if node.get_file_type() != FileType::Directory {
+        //     reply.error(POSIX_NOT_A_DIRECTORY);
+        //     return;
+        // }
 
         // match DataVirFS::readdir(self, _req, ino, _fh, offset) {
         //     Ok(attr) => reply.entry(&self.basic_ttl, &attr, 0),
@@ -269,7 +319,7 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
         //         reply.error(i32::from(err));
         //     }
         // }
-        reply.error(ENOENT);
+        // reply.error(ENOENT);
     }
 }
 

@@ -46,16 +46,6 @@ pub trait INodeRegisterable: std::fmt::Debug {
 }
 
 #[inline]
-pub fn i64_to_u64(num: i64) -> u64 {
-    unsafe { std::mem::transmute(num) }
-}
-
-#[inline]
-pub fn u64_to_i64(num: u64) -> i64 {
-    unsafe { std::mem::transmute(num) }
-}
-
-#[inline]
 fn to_timestamp(time: SystemTime) -> Result<u64, SystemTimeError> {
     match time.duration_since(UNIX_EPOCH) {
         Ok(v) => Ok(v.as_secs()),
@@ -197,12 +187,17 @@ impl NodeName {
     pub fn find<'ans, 'db: 'ans>(
         parent: u64,
         include_hidden: bool,
-        conn: &'db rusqlite::Connection,
+        offset: Option<i64>,
+        conn: &'db rusqlite::Connection
     ) -> DVResult<NodeNameIter<'ans>> {
         let mut sql = "SELECT `inode`, `parent`, `hidden`, `name`, `file_type` FROM `node_view` WHERE `parent` = ?1".to_string();
         if include_hidden == false {
             sql += " AND `hidden` = 0"
         }
+        if let Some(offset) = offset {
+            sql += &format!("OFFSET {}", offset).to_string();
+        }
+        debug!("{}", &sql);
         let stmt = match conn.prepare(&sql) {
             Ok(v) => v,
             Err(err) => {
@@ -267,11 +262,19 @@ impl std::fmt::Debug for NodeNameIter<'_> {
 }
 
 impl<'a> NodeNameIter<'a> {
+    #[allow(dead_code)]
+    pub fn get_pos(&self) -> u64 {
+        self.pos
+    }
+    #[allow(dead_code)]
+    pub fn get_parent(&self) -> u64 {
+        self.parent
+    }
     fn get_rows(&mut self) -> &mut rusqlite::Rows<'a> {
         unsafe { &mut *self.rows.as_mut_ptr() }
     }
 
-    fn try_next(&mut self) -> DVResult<NodeName> {
+    pub fn try_next(&mut self) -> DVResult<NodeName> {
         let row = match self.get_rows().next() {
             Ok(v) => v,
             Err(err) => {
@@ -345,6 +348,21 @@ impl NodeRecord {
     #[allow(dead_code)]
     pub fn get_names(&self) -> Option<&Vec<NodeName>> {
         self.names.as_ref()
+    }
+
+    #[allow(dead_code)]
+    pub fn can_readdir(&self, conn: &Connection) -> bool {
+        if self.file_type == FileType::Directory {
+            return true;
+        }
+        let mut list = match NodeName::find(self.inode, false, None, conn) {
+            Ok(v) => v,
+            Err(err) => {
+                error!("{:?}", err);
+                return false;
+            }
+        };
+        return list.next().is_some();
     }
 
     fn new(
@@ -590,7 +608,7 @@ impl NodeRecord {
     pub fn get(inode: u64, tx: &Transaction) -> DVResult<NodeRecord> {
         trace!("+NodeRecord::get(inode={})", inode);
         let res = tx.query_row(
-        "SELECT `inode`, `obj_uuid`, `obj_type`, `file_type`, `name`, `mtime`, `ctime`, `crtime` FROM `node_meta` WHERE `inode` = ?1",
+        "SELECT `inode`, `obj_uuid`, `obj_type`, `file_type`, `mtime`, `ctime`, `crtime` FROM `node_view` WHERE `inode` = ?1",
         params![u64_to_i64(inode)],
         |row| Ok(NodeRecord::from_row(row))
     );

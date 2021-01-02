@@ -1,5 +1,4 @@
 use crate::inode_record::set_inode_counter;
-use crate::inode_record::u64_to_i64;
 use crate::inode_record::INODE_MIN;
 use crate::inode_record::{
     INODE_ALL_BUNDLES_DIR, INODE_ALL_FILTERS_DIR, INODE_CONFIG, INODE_ROOT, INODE_SOCKET,
@@ -139,16 +138,16 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
         table: (
             "node_view",
             "CREATE VIEW IF NOT EXISTS `node_view` AS SELECT\
-            `node_meta`.`inode`,\
-            `node_meta`.`obj_uuid`,\
-            `node_meta`.`obj_type`,\
-            `node_meta`.`file_type`,\
-            `node_meta`.`mtime`,\
-            `node_meta`.`ctime`,\
-            `node_meta`.`crtime`,\
-            `node_name`.`parent`,\
-            `node_name`.`hidden`,\
-            `node_name`.`name`\
+            `node_meta`.`inode` AS `inode`,\
+            `node_meta`.`obj_uuid` AS `obj_uuid`,\
+            `node_meta`.`obj_type` AS `obj_type`,\
+            `node_meta`.`file_type` AS `file_type`,\
+            `node_meta`.`mtime` AS `mtime`,\
+            `node_meta`.`ctime` AS `ctime`,\
+            `node_meta`.`crtime` AS `crtime`,\
+            `node_name`.`parent` AS `parent`,\
+            `node_name`.`hidden` AS `hidden`,\
+            `node_name`.`name` AS `name`\
             FROM `node_meta` INNER JOIN `node_name` ON (`node_meta`.`inode` = `node_name`.`inode`)",
         ),
         indexes: vec![],
@@ -260,14 +259,19 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
 
     trace!("Reserving root inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
-        (?1, 'D')",
+        "UPDATE `node_meta` SET\
+        `file_type` = 'D' WHERE `inode` = ?1",
         params![u64_to_i64(INODE_ROOT)],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO `node_name` (`inode`, `parent`, `hidden`, `name`) VALUES \
+        (?1, ?2, 0, 'DataVir Root')",
+        params![u64_to_i64(INODE_ROOT), u64_to_i64(INODE_ROOT)],
     )?;
     trace!("Reserving config inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
-        (?1, 'F')",
+        "UPDATE `node_meta` SET\
+        `file_type` = 'F' WHERE `inode` = ?1",
         params![u64_to_i64(INODE_CONFIG)],
     )?;
     conn.execute(
@@ -277,8 +281,8 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
     )?;
     trace!("Reserving socket inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
-        (?1, 'S')",
+        "UPDATE `node_meta` SET\
+        `file_type` = 'S' WHERE `inode` = ?1",
         params![u64_to_i64(INODE_SOCKET)],
     )?;
     conn.execute(
@@ -288,8 +292,8 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
     )?;
     trace!("Reserving status inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
-        (?1, 'F')",
+        "UPDATE `node_meta` SET\
+        `file_type` = 'F' WHERE `inode` = ?1",
         params![u64_to_i64(INODE_STATUS_FILE)],
     )?;
     conn.execute(
@@ -299,8 +303,8 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
     )?;
     trace!("Reserving volumes inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
-        (?1, 'D')",
+        "UPDATE `node_meta` SET\
+        `file_type` = 'D' WHERE `inode` = ?1",
         params![u64_to_i64(INODE_VOLUMES_DIR)],
     )?;
     conn.execute(
@@ -310,8 +314,8 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
     )?;
     trace!("Reserving all bundles inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
-        (?1, 'D')",
+        "UPDATE `node_meta` SET\
+        `file_type` = 'D' WHERE `inode` = ?1",
         params![u64_to_i64(INODE_ALL_BUNDLES_DIR)],
     )?;
     conn.execute(
@@ -321,8 +325,8 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
     )?;
     trace!("Reserving all filters inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
-        (?1, 'D')",
+        "UPDATE `node_meta` SET\
+        `file_type` = 'D' WHERE `inode` = ?1",
         params![u64_to_i64(INODE_ALL_FILTERS_DIR)],
     )?;
     conn.execute(
@@ -332,8 +336,8 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
     )?;
     trace!("Reserving trash inode");
     conn.execute(
-        "INSERT OR REPLACE INTO `node_meta` (`inode`, `file_type`) VALUES \
-        (?1, 'D')",
+        "UPDATE `node_meta` SET\
+        `file_type` = 'D' WHERE `inode` = ?1",
         params![u64_to_i64(INODE_TRASH_DIR)],
     )?;
     conn.execute(
