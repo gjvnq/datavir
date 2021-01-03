@@ -148,7 +148,26 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
             `node_name`.`parent` AS `parent`,\
             `node_name`.`hidden` AS `hidden`,\
             `node_name`.`name` AS `name`\
-            FROM `node_meta` INNER JOIN `node_name` ON (`node_meta`.`inode` = `node_name`.`inode`)",
+            FROM `node_meta` LEFT JOIN `node_name` ON (`node_meta`.`inode` = `node_name`.`inode`)",
+        ),
+        indexes: vec![],
+    });
+    v1_schema.push(SchemaItem {
+        table: (
+            "node_view_nlink",
+            "CREATE VIEW IF NOT EXISTS `node_view_nlink` AS SELECT\
+            `node_meta`.`inode` AS `inode`,\
+            COUNT(`node_name`.`name`)  AS `nlink`,\
+            `node_meta`.`obj_uuid` AS `obj_uuid`,\
+            `node_meta`.`obj_type` AS `obj_type`,\
+            `node_meta`.`file_type` AS `file_type`,\
+            `node_meta`.`mtime` AS `mtime`,\
+            `node_meta`.`ctime` AS `ctime`,\
+            `node_meta`.`crtime` AS `crtime`,\
+            `node_name`.`parent` AS `parent`,\
+            `node_name`.`hidden` AS `hidden`\
+            FROM `node_meta` LEFT JOIN `node_name` ON (`node_meta`.`inode` = `node_name`.`inode`)\
+            GROUP BY `node_meta`.`inode`",
         ),
         indexes: vec![],
     });
@@ -262,11 +281,6 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
         "UPDATE `node_meta` SET\
         `file_type` = 'D' WHERE `inode` = ?1",
         params![u64_to_i64(INODE_ROOT)],
-    )?;
-    conn.execute(
-        "INSERT OR REPLACE INTO `node_name` (`inode`, `parent`, `hidden`, `name`) VALUES \
-        (?1, ?2, 0, 'DataVir Root')",
-        params![u64_to_i64(INODE_ROOT), u64_to_i64(INODE_ROOT)],
     )?;
     trace!("Reserving config inode");
     conn.execute(

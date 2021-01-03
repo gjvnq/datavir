@@ -195,7 +195,7 @@ impl NodeName {
             sql += " AND `hidden` = 0"
         }
         if let Some(offset) = offset {
-            sql += &format!("OFFSET {}", offset).to_string();
+            sql += &format!(" LIMIT -1 OFFSET {}", offset).to_string();
         }
         debug!("{}", &sql);
         let stmt = match conn.prepare(&sql) {
@@ -319,6 +319,7 @@ impl Iterator for NodeNameIter<'_> {
 #[derive(Debug, Clone)]
 pub struct NodeRecord {
     inode: u64,
+    nlink: u32,
     obj_uuid: Uuid,
     obj_type: ObjectType,
     file_type: FileType,
@@ -367,6 +368,7 @@ impl NodeRecord {
 
     fn new(
         num: u64,
+        nlink: u32,
         uuid: Uuid,
         obj_type: ObjectType,
         file_type: FileType,
@@ -376,6 +378,7 @@ impl NodeRecord {
     ) -> Self {
         NodeRecord {
             inode: num,
+            nlink: nlink,
             obj_uuid: uuid,
             obj_type: obj_type,
             file_type: file_type,
@@ -388,22 +391,27 @@ impl NodeRecord {
 
     fn from_row(row: &rusqlite::Row) -> DVResult<Self> {
         let inode = i64_to_u64(row.get(0)?);
-        let obj_uuid = parse_uuid(&row.get::<_, String>(1)?)?;
-        let obj_type = row.get(2)?;
-        let file_type = string2file_type(&row.get::<_, String>(3)?)?;
-        let mtime = sql2time(row.get(4)?)?;
-        let ctime = sql2time(row.get(5)?)?;
-        let crtime = sql2time(row.get(6)?)?;
+        let mut nlink = row.get(1)?;
+        let obj_uuid = parse_uuid(&row.get::<_, String>(2)?)?;
+        let obj_type = row.get(3)?;
+        let file_type = string2file_type(&row.get::<_, String>(4)?)?;
+        let mtime = sql2time(row.get(5)?)?;
+        let ctime = sql2time(row.get(6)?)?;
+        let crtime = sql2time(row.get(7)?)?;
+
+        if inode == INODE_ROOT {
+            nlink = 2;
+        }
 
         Ok(NodeRecord::new(
-            inode, obj_uuid, obj_type, file_type, mtime, ctime, crtime,
+            inode, nlink, obj_uuid, obj_type, file_type, mtime, ctime, crtime,
         ))
     }
 
     #[allow(dead_code)]
-    pub fn new_now(inode: u64, uuid: Uuid, obj_type: ObjectType, file_type: FileType) -> Self {
+    pub fn new_now(inode: u64, nlink: u32, uuid: Uuid, obj_type: ObjectType, file_type: FileType) -> Self {
         let now = SystemTime::now();
-        NodeRecord::new(inode, uuid, obj_type, file_type, now, now, now)
+        NodeRecord::new(inode, nlink, uuid, obj_type, file_type, now, now, now)
     }
 
     fn get_inode_i64(&self) -> i64 {
@@ -608,7 +616,7 @@ impl NodeRecord {
     pub fn get(inode: u64, tx: &Transaction) -> DVResult<NodeRecord> {
         trace!("+NodeRecord::get(inode={})", inode);
         let res = tx.query_row(
-        "SELECT `inode`, `obj_uuid`, `obj_type`, `file_type`, `mtime`, `ctime`, `crtime` FROM `node_view` WHERE `inode` = ?1",
+        "SELECT `inode`, `nlink`, `obj_uuid`, `obj_type`, `file_type`, `mtime`, `ctime`, `crtime` FROM `node_view_nlink` WHERE `inode` = ?1",
         params![u64_to_i64(inode)],
         |row| Ok(NodeRecord::from_row(row))
     );
@@ -649,7 +657,7 @@ impl NodeRecord {
     pub fn to_file_attr(&self, size: u64) -> FileAttr {
         unsafe {
             FileAttr {
-                ino: INODE_ROOT,
+                ino: self.inode,
                 size: size,
                 blocks: size / BLOCK_SIZE,
                 atime: self.mtime,
@@ -658,7 +666,7 @@ impl NodeRecord {
                 crtime: self.crtime,
                 kind: self.file_type,
                 perm: DEFAULT_DIR_PERM,
-                nlink: MIN_HARD_LINKS_DIR,
+                nlink: self.nlink,
                 uid: DEFAULT_UID,
                 gid: DEFAULT_GID,
                 rdev: DEFAULT_RDEV,

@@ -4,7 +4,6 @@ use crate::inode_record::NodeNameIter;
 use crate::inode_record::NodeName;
 use crate::inode_record::NodeRecord;
 use crate::inode_record::INODE_MIN;
-use crate::inode_record::INODE_ROOT;
 use crate::open_database;
 use crate::prelude::*;
 use core::sync::atomic::AtomicU64;
@@ -176,7 +175,25 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
 
     #[allow(unused_variables)]
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
-        reply.error(ENOENT);
+        let trace_msg = format!(
+            "DataVirFS::getattr(_req={}, ino={})",
+            fmt_request(_req),
+            ino
+        );
+        trace!("+{}", trace_msg);
+
+        // get inode and repy the attributes
+        let node = match NodeRecord::get(ino, &self.new_tx()) {
+            Ok(v) => v,
+            Err(err) => {
+                trace!("-{} -> {:?}", trace_msg, err);
+                reply.error(i32::from(err));
+                return;
+            }
+        };
+        let attrs = node.to_file_attr(0);
+        reply.attr(&self.basic_ttl, &attrs);
+        trace!("-{} -> {:?}", trace_msg, attrs);
     }
 
     #[allow(unused_variables)]
