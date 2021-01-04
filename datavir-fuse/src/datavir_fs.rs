@@ -130,8 +130,8 @@ impl<'fs> DataVirFS<'fs> {
         ans
     }
 
-    fn new_tx(&mut self) -> Transaction {
-        self.conn.transaction().unwrap()
+    fn new_tx<'tx: 'fs>(&mut self) -> Transaction<'tx> {
+        fuck_mut(&mut self.conn).transaction().unwrap()
     }
 }
 
@@ -163,14 +163,19 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
                 return;
             }
         };
-        reply.error(POSIX_IO_ERROR);
-        // match DataVirFS::lookup(self, _req, parent, name) {
-        //     Ok(attr) => reply.entry(&self.basic_ttl, &attr, 0),
-        //     Err(err) => {
-        //         trace!("-{} -> {:?}", trace_msg, err);
-        //         reply.error(i32::from(err));
-        //     }
-        // }
+        let tx = self.new_tx();
+        match NodeRecord::lookup(parent, name, &tx) {
+            Ok(node) => {
+                let attrs = node.to_file_attr(0);
+                trace!("-{} -> Ok", trace_msg);
+                reply.entry(&self.basic_ttl, &attrs, 0);
+            },
+            Err(err) => {
+                error!("Failed to lookup node ({}, {:?}): {:?}", parent, name, err);
+                trace!("-{} -> {:?}", trace_msg, err);
+                reply.error(i32::from(err));
+            }
+        };
     }
 
     #[allow(unused_variables)]
@@ -229,7 +234,8 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
         trace!("+{}", trace_msg);
 
         // get inode and check if it is a directory
-        let node = match NodeRecord::get(ino, &self.new_tx()) {
+        let tx = self.new_tx();
+        let node = match NodeRecord::get(ino, &tx) {
             Ok(v) => v,
             Err(err) => {
                 trace!("-{} -> {:?}", trace_msg, err);
@@ -237,7 +243,7 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
                 return;
             }
         };
-        if !node.can_readdir(&self.conn) {
+        if !node.can_readdir(&tx) {
             trace!("-{} -> Not dir", trace_msg);
             reply.error(POSIX_NOT_A_DIRECTORY);
             return;
@@ -245,6 +251,8 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
         let fh = 0;
         let reply_flags = 0;
         reply.opened(fh, reply_flags);
+
+        // TODO: use fh to store the transaction object and the iterator (this will proabbly increase performance and consistency)
 
         trace!("-{}", trace_msg);
     }
@@ -269,7 +277,8 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
         let mut offset = offset;
 
         if offset == 0 {
-            let full = reply.add(ino, offset, FileType::Directory, ".");
+            let full = reply.add(ino, offset+1, FileType::Directory, ".");
+            debug!("Add '.' for {}", ino);
             if full {
                 reply.ok();
                 trace!("-{}", trace_msg);
@@ -278,9 +287,18 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
                 offset += 1;
             }
         }
+        let tx = self.new_tx();
         if offset == 1 {
-            let parent = ino; //TODO: fix this
-            let full = reply.add(parent, offset, FileType::Directory, "..");
+            let parent = match NodeRecord::get_main_parent_for(ino, &tx) {
+                Ok(v) => v,
+                Err(err) => {
+                    trace!("-{} -> {:?}", trace_msg, err);
+                    reply.error(i32::from(err));
+                    return;
+                }
+            };
+            let full = reply.add(parent, offset+1, FileType::Directory, "..");
+            debug!("Add '..' for {}", ino);
             if full {
                 reply.ok();
                 trace!("-{}", trace_msg);
@@ -290,7 +308,7 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
             }
         }
 
-        let list = NodeName::find(ino, false, Some(offset-2), &self.conn);
+        let list = NodeName::list(ino, false, Some(offset-2), &tx);
         
         if let Err(err) = list {
             trace!("-{} -> {:?}", trace_msg, err);
@@ -302,7 +320,7 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
             // The unwrap is safe because the nodes came right form the database
             if reply.add(
                 node.get_inode(),
-                offset,
+                offset+1,
                 node.get_file_type().unwrap(),
                 node.get_name(),
             ) {
@@ -313,30 +331,6 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
         reply.ok();
         trace!("-{} -> OK", trace_msg);
         info!("Replied dir");
-        // return;
-
-        // // get inode and check if it is a directory
-        // let node = match NodeRecord::get(ino, &self.new_tx()) {
-        //     Ok(v) => v,
-        //     Err(err) => {
-        //         trace!("-{} -> {:?}", trace_msg, err);
-        //         reply.error(i32::from(err));
-        //         return;
-        //     }
-        // };
-        // if node.get_file_type() != FileType::Directory {
-        //     reply.error(POSIX_NOT_A_DIRECTORY);
-        //     return;
-        // }
-
-        // match DataVirFS::readdir(self, _req, ino, _fh, offset) {
-        //     Ok(attr) => reply.entry(&self.basic_ttl, &attr, 0),
-        //     Err(err) => {
-        //         trace!("-{} -> {:?}", trace_msg, err);
-        //         reply.error(i32::from(err));
-        //     }
-        // }
-        // reply.error(ENOENT);
     }
 }
 

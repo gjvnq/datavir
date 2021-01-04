@@ -102,6 +102,7 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
             "node_meta",
             "CREATE TABLE IF NOT EXISTS `node_meta` (\
             `inode` INTEGER PRIMARY KEY ASC,\
+            `main_parent` INTEGER NOT NULL,\
             `obj_uuid` CHAR(36),\
             `obj_type` VARCHAR(20),\
             `file_type` VARCHAR(1),\
@@ -139,6 +140,7 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
             "node_view",
             "CREATE VIEW IF NOT EXISTS `node_view` AS SELECT\
             `node_meta`.`inode` AS `inode`,\
+            `node_meta`.`main_parent` AS `main_parent`,\
             `node_meta`.`obj_uuid` AS `obj_uuid`,\
             `node_meta`.`obj_type` AS `obj_type`,\
             `node_meta`.`file_type` AS `file_type`,\
@@ -157,6 +159,7 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
             "node_view_nlink",
             "CREATE VIEW IF NOT EXISTS `node_view_nlink` AS SELECT\
             `node_meta`.`inode` AS `inode`,\
+            `node_meta`.`main_parent` AS `main_parent`,\
             COUNT(`node_name`.`name`)  AS `nlink`,\
             `node_meta`.`obj_uuid` AS `obj_uuid`,\
             `node_meta`.`obj_type` AS `obj_type`,\
@@ -270,8 +273,8 @@ fn reserve_inodes(conn: &Connection) -> SQLResult<()> {
     for inode in 0..INODE_MIN {
         trace!("Reserving inode number {}", inode);
         conn.execute(
-            "INSERT OR REPLACE INTO `node_meta` (`inode`, `obj_uuid`, `obj_type`) VALUES \
-            (?1, '00000000-0000-0000-0000-000000000000', 'R')",
+            "INSERT OR REPLACE INTO `node_meta` (`inode`, `main_parent`, `obj_uuid`, `obj_type`) VALUES \
+            (?1, 1, '00000000-0000-0000-0000-000000000000', 'R')",
             params![inode],
         )?;
     }

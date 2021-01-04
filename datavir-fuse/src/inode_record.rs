@@ -184,12 +184,13 @@ impl NodeName {
             }
         }
     }
-    pub fn find<'ans, 'db: 'ans>(
+    pub fn list<'ans, 'db: 'ans>(
         parent: u64,
         include_hidden: bool,
         offset: Option<i64>,
         conn: &'db rusqlite::Connection
     ) -> DVResult<NodeNameIter<'ans>> {
+        let trace_msg = format!("NodeName::list(parent: {}, include_hidden: {}, offset: {:?})", parent, include_hidden, offset);
         let mut sql = "SELECT `inode`, `parent`, `hidden`, `name`, `file_type` FROM `node_view` WHERE `parent` = ?1".to_string();
         if include_hidden == false {
             sql += " AND `hidden` = 0"
@@ -201,9 +202,10 @@ impl NodeName {
         let stmt = match conn.prepare(&sql) {
             Ok(v) => v,
             Err(err) => {
-                error!(
-                    "-NodeName::find(parent: {}, sql: {}) Failed to prepare statement: {:?}",
-                    parent, sql, err
+                error!("{:?}", err);
+                trace!(
+                    "-{} -> Error",
+                    trace_msg
                 );
                 return Err(DVError::from(err));
             }
@@ -226,6 +228,7 @@ impl NodeName {
                 }
             },
         );
+        trace!("-{} -> Ok", trace_msg);
         Ok(ans)
     }
 
@@ -319,6 +322,7 @@ impl Iterator for NodeNameIter<'_> {
 #[derive(Debug, Clone)]
 pub struct NodeRecord {
     inode: u64,
+    main_parent: u64,
     nlink: u32,
     obj_uuid: Uuid,
     obj_type: ObjectType,
@@ -356,7 +360,7 @@ impl NodeRecord {
         if self.file_type == FileType::Directory {
             return true;
         }
-        let mut list = match NodeName::find(self.inode, false, None, conn) {
+        let mut list = match NodeName::list(self.inode, false, None, conn) {
             Ok(v) => v,
             Err(err) => {
                 error!("{:?}", err);
@@ -368,6 +372,7 @@ impl NodeRecord {
 
     fn new(
         num: u64,
+        main_parent: u64,
         nlink: u32,
         uuid: Uuid,
         obj_type: ObjectType,
@@ -378,6 +383,7 @@ impl NodeRecord {
     ) -> Self {
         NodeRecord {
             inode: num,
+            main_parent: main_parent,
             nlink: nlink,
             obj_uuid: uuid,
             obj_type: obj_type,
@@ -391,27 +397,28 @@ impl NodeRecord {
 
     fn from_row(row: &rusqlite::Row) -> DVResult<Self> {
         let inode = i64_to_u64(row.get(0)?);
-        let mut nlink = row.get(1)?;
-        let obj_uuid = parse_uuid(&row.get::<_, String>(2)?)?;
-        let obj_type = row.get(3)?;
-        let file_type = string2file_type(&row.get::<_, String>(4)?)?;
-        let mtime = sql2time(row.get(5)?)?;
-        let ctime = sql2time(row.get(6)?)?;
-        let crtime = sql2time(row.get(7)?)?;
+        let main_parent = i64_to_u64(row.get(1)?);
+        let mut nlink = row.get(2)?;
+        let obj_uuid = parse_uuid(&row.get::<_, String>(3)?)?;
+        let obj_type = row.get(4)?;
+        let file_type = string2file_type(&row.get::<_, String>(5)?)?;
+        let mtime = sql2time(row.get(6)?)?;
+        let ctime = sql2time(row.get(7)?)?;
+        let crtime = sql2time(row.get(8)?)?;
 
         if inode == INODE_ROOT {
             nlink = 2;
         }
 
         Ok(NodeRecord::new(
-            inode, nlink, obj_uuid, obj_type, file_type, mtime, ctime, crtime,
+            inode, main_parent, nlink, obj_uuid, obj_type, file_type, mtime, ctime, crtime,
         ))
     }
 
     #[allow(dead_code)]
-    pub fn new_now(inode: u64, nlink: u32, uuid: Uuid, obj_type: ObjectType, file_type: FileType) -> Self {
+    pub fn new_now(inode: u64, main_parent: u64, nlink: u32, uuid: Uuid, obj_type: ObjectType, file_type: FileType) -> Self {
         let now = SystemTime::now();
-        NodeRecord::new(inode, nlink, uuid, obj_type, file_type, now, now, now)
+        NodeRecord::new(inode, main_parent, nlink, uuid, obj_type, file_type, now, now, now)
     }
 
     fn get_inode_i64(&self) -> i64 {
@@ -512,7 +519,7 @@ impl NodeRecord {
     ) -> DVResult<Vec<NodeRecord>> {
         let trace_msg = format!("NodeRecord::search(parent={:?}, name={:?}, obj_type={:?}, obj_uuid={:?}, file_type={:?}", parent, name, obj_type, obj_uuid, file_type);
         trace!("+{}", trace_msg);
-        let mut sql = "SELECT `inode`, `parent`, `obj_uuid`, `obj_type`, `file_type`, `name`, `mtime`, `ctime`, `crtime` FROM `node_meta` WHERE 1 = 1".to_string();
+        let mut sql = "SELECT `inode`, `main_parent`, `obj_uuid`, `obj_type`, `file_type`, `name`, `mtime`, `ctime`, `crtime` FROM `node_view` WHERE 1 = 1".to_string();
         let file_type2 = match file_type {
             Some(s) => file_type2string(s),
             None => "-",
@@ -582,6 +589,27 @@ impl NodeRecord {
         Ok(ans)
     }
 
+    pub fn get_main_parent_for(inode: u64, tx: &Transaction) -> DVResult<u64> {
+        let trace_msg = format!("NodeRecord::get_main_parent_for(inode={})", inode);
+        trace!("+{}", trace_msg);
+        let sql = "SELECT `main_parent` FROM `node_meta` WHERE `inode` = ?1";
+        debug!("{}", sql);
+        let res = tx.query_row(sql, params![u64_to_i64(inode)],
+            |row| Ok(i64_to_u64(row.get(0)?)));
+
+        match res {
+            Ok(parent) => {
+                trace!("-{} -> {}", trace_msg, parent);
+                Ok(parent)
+            },
+            Err(err) => {
+                error!("Failed to get main parent for {} from database: {:?}", inode, err);
+                trace!("-{} -> Err", trace_msg);
+                return Err(DVError::SQLError(err));
+            }
+        }
+    }
+
     #[allow(dead_code)]
     pub fn find_one(
         parent: Option<u64>,
@@ -613,10 +641,73 @@ impl NodeRecord {
     }
 
     #[allow(dead_code)]
+    pub fn lookup(
+        parent: u64,
+        name: &str,
+        tx: &Transaction,
+    ) -> DVResult<NodeRecord> {
+        let trace_msg = format!("NodeRecord::lookup(parent={:?}, name={:?})", parent, name);
+        trace!("+{}", trace_msg);
+        let sql = "SELECT `inode`, `main_parent`, 0 AS `nlink`, `obj_uuid`, `obj_type`, `file_type`, `mtime`, `ctime`, `crtime` FROM `node_view` WHERE `parent` = ?1 AND `name` = ?2";
+        debug!("{}", sql);
+        let res = tx.query_row(sql, params![u64_to_i64(parent), name],
+            |row| Ok(NodeRecord::from_row(row)));
+
+        if res.is_err() {
+            let err = res.unwrap_err();
+            error!("Failed to get lookup ({}, {}) from database: {:?}", parent, name, err);
+            trace!("-{} -> Err", trace_msg);
+            return Err(DVError::SQLError(err));
+        }
+        let node = res.unwrap();
+        if node.is_err() {
+            let err = node.unwrap_err();
+            error!("Failed to get lookup ({}, {}) from database: {:?}", parent, name, err);
+            trace!("-{} -> Err", trace_msg);
+            return Err(err);
+        }
+        let mut node = node.unwrap();
+
+        match node.reload_nlinks(tx) {
+            Ok(_) => {
+                trace!("-{} -> {:?}", trace_msg, node);
+                Ok(node)
+            },
+            Err(err) => {
+                error!("Failed to get lookup ({}, {}) from database: {:?}", parent, name, err);
+                trace!("-{} -> Err", trace_msg);
+                Err(err)
+            }
+        }
+    }
+
+    fn reload_nlinks(&mut self, tx: &Transaction) -> DVResult<()> {
+        let trace_msg = format!("NodeRecord::reload_nlinks(self={})", self.inode);
+        trace!("+{}", trace_msg);
+        let sql = "SELECT `nlink` FROM `node_view_nlink` WHERE `inode` = ?1";
+        debug!("{}", sql);
+        let res = tx.query_row(sql, params![self.get_inode_i64()],
+            |row| Ok(row.get(0)?));
+
+        match res {
+            Ok(v) => {
+                trace!("-{} -> Ok", trace_msg);
+                self.nlink = v;
+                Ok(())
+            },
+            Err(err) => {
+                error!("Failed to load nlink for {} from database: {:?}", self.inode, err);
+                trace!("-{} -> Err", trace_msg);
+                Err(DVError::SQLError(err))
+            }
+        }
+    }
+
+    #[allow(dead_code)]
     pub fn get(inode: u64, tx: &Transaction) -> DVResult<NodeRecord> {
         trace!("+NodeRecord::get(inode={})", inode);
         let res = tx.query_row(
-        "SELECT `inode`, `nlink`, `obj_uuid`, `obj_type`, `file_type`, `mtime`, `ctime`, `crtime` FROM `node_view_nlink` WHERE `inode` = ?1",
+        "SELECT `inode`, `main_parent`, `nlink`, `obj_uuid`, `obj_type`, `file_type`, `mtime`, `ctime`, `crtime` FROM `node_view_nlink` WHERE `inode` = ?1",
         params![u64_to_i64(inode)],
         |row| Ok(NodeRecord::from_row(row))
     );
