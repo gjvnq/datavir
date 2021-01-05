@@ -188,9 +188,12 @@ impl NodeName {
         parent: u64,
         include_hidden: bool,
         offset: Option<i64>,
-        conn: &'db rusqlite::Connection
+        tx: &'db rusqlite::Transaction,
     ) -> DVResult<NodeNameIter<'ans>> {
-        let trace_msg = format!("NodeName::list(parent: {}, include_hidden: {}, offset: {:?})", parent, include_hidden, offset);
+        let trace_msg = format!(
+            "NodeName::list(parent: {}, include_hidden: {}, offset: {:?})",
+            parent, include_hidden, offset
+        );
         let mut sql = "SELECT `inode`, `parent`, `hidden`, `name`, `file_type` FROM `node_view` WHERE `parent` = ?1".to_string();
         if include_hidden == false {
             sql += " AND `hidden` = 0"
@@ -199,14 +202,11 @@ impl NodeName {
             sql += &format!(" LIMIT -1 OFFSET {}", offset).to_string();
         }
         debug!("{}", &sql);
-        let stmt = match conn.prepare(&sql) {
+        let stmt = match tx.prepare(&sql) {
             Ok(v) => v,
             Err(err) => {
                 error!("{:?}", err);
-                trace!(
-                    "-{} -> Error",
-                    trace_msg
-                );
+                trace!("-{} -> Error", trace_msg);
                 return Err(DVError::from(err));
             }
         };
@@ -327,6 +327,7 @@ pub struct NodeRecord {
     obj_uuid: Uuid,
     obj_type: ObjectType,
     file_type: FileType,
+    file_size: u64,
     mtime: SystemTime,
     ctime: SystemTime,
     crtime: SystemTime,
@@ -356,11 +357,11 @@ impl NodeRecord {
     }
 
     #[allow(dead_code)]
-    pub fn can_readdir(&self, conn: &Connection) -> bool {
+    pub fn can_readdir(&self, tx: &Transaction) -> bool {
         if self.file_type == FileType::Directory {
             return true;
         }
-        let mut list = match NodeName::list(self.inode, false, None, conn) {
+        let mut list = match NodeName::list(self.inode, false, None, tx) {
             Ok(v) => v,
             Err(err) => {
                 error!("{:?}", err);
@@ -377,6 +378,7 @@ impl NodeRecord {
         uuid: Uuid,
         obj_type: ObjectType,
         file_type: FileType,
+        file_size: u64,
         mtime: SystemTime,
         ctime: SystemTime,
         crtime: SystemTime,
@@ -388,6 +390,7 @@ impl NodeRecord {
             obj_uuid: uuid,
             obj_type: obj_type,
             file_type: file_type,
+            file_size: file_size,
             mtime: mtime,
             ctime: ctime,
             crtime: crtime,
@@ -402,23 +405,52 @@ impl NodeRecord {
         let obj_uuid = parse_uuid(&row.get::<_, String>(3)?)?;
         let obj_type = row.get(4)?;
         let file_type = string2file_type(&row.get::<_, String>(5)?)?;
-        let mtime = sql2time(row.get(6)?)?;
-        let ctime = sql2time(row.get(7)?)?;
-        let crtime = sql2time(row.get(8)?)?;
+        let file_size = i64_to_u64(row.get(6)?);
+        let mtime = sql2time(row.get(7)?)?;
+        let ctime = sql2time(row.get(8)?)?;
+        let crtime = sql2time(row.get(9)?)?;
 
         if inode == INODE_ROOT {
             nlink = 2;
         }
 
         Ok(NodeRecord::new(
-            inode, main_parent, nlink, obj_uuid, obj_type, file_type, mtime, ctime, crtime,
+            inode,
+            main_parent,
+            nlink,
+            obj_uuid,
+            obj_type,
+            file_type,
+            file_size,
+            mtime,
+            ctime,
+            crtime,
         ))
     }
 
     #[allow(dead_code)]
-    pub fn new_now(inode: u64, main_parent: u64, nlink: u32, uuid: Uuid, obj_type: ObjectType, file_type: FileType) -> Self {
+    pub fn new_now(
+        inode: u64,
+        main_parent: u64,
+        nlink: u32,
+        uuid: Uuid,
+        obj_type: ObjectType,
+        file_type: FileType,
+        file_size: u64,
+    ) -> Self {
         let now = SystemTime::now();
-        NodeRecord::new(inode, main_parent, nlink, uuid, obj_type, file_type, now, now, now)
+        NodeRecord::new(
+            inode,
+            main_parent,
+            nlink,
+            uuid,
+            obj_type,
+            file_type,
+            file_size,
+            now,
+            now,
+            now,
+        )
     }
 
     fn get_inode_i64(&self) -> i64 {
@@ -432,12 +464,13 @@ impl NodeRecord {
         let now_unix = time2sql(now)?;
         let had_inode = self.inode == INODE_NULL;
         let sql = match had_inode {
-            true => "INSERT INTO `node_meta` (`obj_uuid`, `obj_type`, `file_type`, `ctime`, `mtime`, `crtime`) VALUES \
+            true => "INSERT INTO `node_meta` (`obj_uuid`, `obj_type`, `file_type`, `file_size`, `ctime`, `mtime`, `crtime`) VALUES \
                     (?, ?, ?, ?, ?, ?)",
-            false => "REPLACE INTO `node_meta` (`inode`, `obj_uuid`, `obj_type`, `file_type`, `ctime`) VALUES \
+            false => "REPLACE INTO `node_meta` (`inode`, `obj_uuid`, `obj_type`, `file_type`, `file_size`, `ctime`) VALUES \
                     (?, ?, ?, ?, ?)",
         };
         let file_type_str = file_type2string(self.file_type);
+        let file_size = u64_to_i64(self.file_size);
         let inode = self.get_inode_i64();
         let params: Vec<&dyn rusqlite::ToSql>;
         params = match had_inode {
@@ -445,6 +478,7 @@ impl NodeRecord {
                 &self.obj_uuid,
                 &self.obj_type,
                 &file_type_str,
+                &file_size,
                 &now_unix,
                 &now_unix,
                 &now_unix,
@@ -454,6 +488,7 @@ impl NodeRecord {
                 &self.obj_uuid,
                 &self.obj_type,
                 &file_type_str,
+                &file_size,
                 &now_unix,
             ],
         };
@@ -519,7 +554,7 @@ impl NodeRecord {
     ) -> DVResult<Vec<NodeRecord>> {
         let trace_msg = format!("NodeRecord::search(parent={:?}, name={:?}, obj_type={:?}, obj_uuid={:?}, file_type={:?}", parent, name, obj_type, obj_uuid, file_type);
         trace!("+{}", trace_msg);
-        let mut sql = "SELECT `inode`, `main_parent`, `obj_uuid`, `obj_type`, `file_type`, `name`, `mtime`, `ctime`, `crtime` FROM `node_view` WHERE 1 = 1".to_string();
+        let mut sql = "SELECT `inode`, `main_parent`, `obj_uuid`, `obj_type`, `file_type`, `file_size`, `name`, `mtime`, `ctime`, `crtime` FROM `node_view` WHERE 1 = 1".to_string();
         let file_type2 = match file_type {
             Some(s) => file_type2string(s),
             None => "-",
@@ -594,16 +629,20 @@ impl NodeRecord {
         trace!("+{}", trace_msg);
         let sql = "SELECT `main_parent` FROM `node_meta` WHERE `inode` = ?1";
         debug!("{}", sql);
-        let res = tx.query_row(sql, params![u64_to_i64(inode)],
-            |row| Ok(i64_to_u64(row.get(0)?)));
+        let res = tx.query_row(sql, params![u64_to_i64(inode)], |row| {
+            Ok(i64_to_u64(row.get(0)?))
+        });
 
         match res {
             Ok(parent) => {
                 trace!("-{} -> {}", trace_msg, parent);
                 Ok(parent)
-            },
+            }
             Err(err) => {
-                error!("Failed to get main parent for {} from database: {:?}", inode, err);
+                error!(
+                    "Failed to get main parent for {} from database: {:?}",
+                    inode, err
+                );
                 trace!("-{} -> Err", trace_msg);
                 return Err(DVError::SQLError(err));
             }
@@ -641,28 +680,38 @@ impl NodeRecord {
     }
 
     #[allow(dead_code)]
-    pub fn lookup(
-        parent: u64,
-        name: &str,
-        tx: &Transaction,
-    ) -> DVResult<NodeRecord> {
+    pub fn lookup(parent: u64, name: &str, tx: &Transaction) -> DVResult<NodeRecord> {
         let trace_msg = format!("NodeRecord::lookup(parent={:?}, name={:?})", parent, name);
         trace!("+{}", trace_msg);
-        let sql = "SELECT `inode`, `main_parent`, 0 AS `nlink`, `obj_uuid`, `obj_type`, `file_type`, `mtime`, `ctime`, `crtime` FROM `node_view` WHERE `parent` = ?1 AND `name` = ?2";
+        let sql = "SELECT `inode`, `main_parent`, 0 AS `nlink`, `obj_uuid`, `obj_type`, `file_type`, `file_size`, `mtime`, `ctime`, `crtime` FROM `node_view` WHERE `parent` = ?1 AND `name` = ?2";
         debug!("{}", sql);
-        let res = tx.query_row(sql, params![u64_to_i64(parent), name],
-            |row| Ok(NodeRecord::from_row(row)));
+        let res = tx.query_row(sql, params![u64_to_i64(parent), name], |row| {
+            Ok(NodeRecord::from_row(row))
+        });
 
         if res.is_err() {
             let err = res.unwrap_err();
-            error!("Failed to get lookup ({}, {}) from database: {:?}", parent, name, err);
+            if is_sql_not_found(&err) {
+                warn!(
+                    "Failed to get lookup ({}, {}) from database: {:?}",
+                    parent, name, err
+                );
+            } else {
+                error!(
+                    "Failed to get lookup ({}, {}) from database: {:?}",
+                    parent, name, err
+                );
+            }
             trace!("-{} -> Err", trace_msg);
             return Err(DVError::SQLError(err));
         }
         let node = res.unwrap();
         if node.is_err() {
             let err = node.unwrap_err();
-            error!("Failed to get lookup ({}, {}) from database: {:?}", parent, name, err);
+            error!(
+                "Failed to get lookup ({}, {}) from database: {:?}",
+                parent, name, err
+            );
             trace!("-{} -> Err", trace_msg);
             return Err(err);
         }
@@ -672,9 +721,12 @@ impl NodeRecord {
             Ok(_) => {
                 trace!("-{} -> {:?}", trace_msg, node);
                 Ok(node)
-            },
+            }
             Err(err) => {
-                error!("Failed to get lookup ({}, {}) from database: {:?}", parent, name, err);
+                error!(
+                    "Failed to get lookup ({}, {}) from database: {:?}",
+                    parent, name, err
+                );
                 trace!("-{} -> Err", trace_msg);
                 Err(err)
             }
@@ -686,17 +738,19 @@ impl NodeRecord {
         trace!("+{}", trace_msg);
         let sql = "SELECT `nlink` FROM `node_view_nlink` WHERE `inode` = ?1";
         debug!("{}", sql);
-        let res = tx.query_row(sql, params![self.get_inode_i64()],
-            |row| Ok(row.get(0)?));
+        let res = tx.query_row(sql, params![self.get_inode_i64()], |row| Ok(row.get(0)?));
 
         match res {
             Ok(v) => {
                 trace!("-{} -> Ok", trace_msg);
                 self.nlink = v;
                 Ok(())
-            },
+            }
             Err(err) => {
-                error!("Failed to load nlink for {} from database: {:?}", self.inode, err);
+                error!(
+                    "Failed to load nlink for {} from database: {:?}",
+                    self.inode, err
+                );
                 trace!("-{} -> Err", trace_msg);
                 Err(DVError::SQLError(err))
             }
@@ -707,7 +761,7 @@ impl NodeRecord {
     pub fn get(inode: u64, tx: &Transaction) -> DVResult<NodeRecord> {
         trace!("+NodeRecord::get(inode={})", inode);
         let res = tx.query_row(
-        "SELECT `inode`, `main_parent`, `nlink`, `obj_uuid`, `obj_type`, `file_type`, `mtime`, `ctime`, `crtime` FROM `node_view_nlink` WHERE `inode` = ?1",
+        "SELECT `inode`, `main_parent`, `nlink`, `obj_uuid`, `obj_type`, `file_type`, `file_size`, `mtime`, `ctime`, `crtime` FROM `node_view_nlink` WHERE `inode` = ?1",
         params![u64_to_i64(inode)],
         |row| Ok(NodeRecord::from_row(row))
     );
@@ -745,12 +799,12 @@ impl NodeRecord {
     }
 
     #[allow(dead_code)]
-    pub fn to_file_attr(&self, size: u64) -> FileAttr {
+    pub fn to_file_attr(&self) -> FileAttr {
         unsafe {
             FileAttr {
                 ino: self.inode,
-                size: size,
-                blocks: size / BLOCK_SIZE,
+                size: self.file_size,
+                blocks: self.file_size / BLOCK_SIZE,
                 atime: self.mtime,
                 mtime: self.mtime,
                 ctime: self.ctime,

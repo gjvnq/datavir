@@ -39,6 +39,26 @@ pub enum DVError {
 
 pub type DVResult<T> = Result<T, DVError>;
 
+impl DVError {
+    pub fn is_not_found(&self) -> bool {
+        match self {
+            DVError::SQLError(err) => is_sql_not_found(err),
+            DVError::IOError(err) => match err.kind() {
+                std::io::ErrorKind::NotFound => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+}
+
+pub fn is_sql_not_found(err: &SQLError) -> bool {
+    match err {
+        rusqlite::Error::QueryReturnedNoRows => true,
+        _ => false,
+    }
+}
+
 impl std::convert::From<SystemTimeError> for DVError {
     fn from(err: SystemTimeError) -> Self {
         DVError::SystemTimeError(err)

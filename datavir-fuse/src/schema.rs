@@ -21,10 +21,10 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
         table: (
             "bundles",
             "CREATE TABLE IF NOT EXISTS `bundles` (\
-            `bundle_uuid` CHAR(36),\
-            `conflicts_from` CHAR(36),\
-            `sync_status` INT,\
-            `name` VARCHAR(250));",
+            `bundle_uuid` CHAR(36) NOT NULL,\
+            `conflicts_from` CHAR(36) NOT NULL,\
+            `sync_status` INT NOT NULL,\
+            `name` VARCHAR(250) NOT NULL);",
         ),
         indexes: vec![(
             "bundles_sync_status_idx",
@@ -35,14 +35,14 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
         table: (
             "files",
             "CREATE TABLE IF NOT EXISTS `files` (\
-            `file_uuid` CHAR(36),\
-            `bundle_uuid` CHAR(36),\
+            `file_uuid` CHAR(36) NOT NULL,\
+            `bundle_uuid` CHAR(36) NOT NULL,\
             `base_blob_uuid` CHAR(36),\
             `tree_hash` VARCHAR(200),\
-            `kind` CHAR(1),\
-            `unix_perm` INTEGER,\
-            `size` INTEGER,\
-            `path` VARCHAR(250));",
+            `kind` CHAR(1) NOT NULL,\
+            `unix_perm` INTEGER NOT NULL,\
+            `size` INTEGER NOT NULL,\
+            `path` VARCHAR(250) NOT NULL);",
         ),
         indexes: vec![(
             "files_bundle_uuid_idx",
@@ -72,9 +72,9 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
         table: (
             "blocks",
             "CREATE TABLE IF NOT EXISTS `blocks` (\
-            `blob_uuid` CHAR(36),\
-            `file_uuid` CHAR(36),\
-            `block_num` INTEGER);",
+            `blob_uuid` CHAR(36) NOT NULL,\
+            `file_uuid` CHAR(36) NOT NULL,\
+            `block_num` INTEGER NOT NULL);",
         ),
         indexes: vec![
             (
@@ -89,9 +89,9 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
     });
     v1_schema.push(SchemaItem{
         table: ("basic_metadata", "CREATE TABLE IF NOT EXISTS `basic_metadata` (\
-            `subject_uuid` CHAR(36),\
-            `predicate` VARCHAR(250),\
-            `value` TEXT);"),
+            `subject_uuid` CHAR(36) NOT NULL,\
+            `predicate` VARCHAR(250) NOT NULL,\
+            `value` TEXT NOT NULL);"),
         indexes: vec![
             ("basic_metadata_subject_uuid_idx", "CREATE INDEX IF NOT EXISTS `basic_metadata_subject_uuid_idx` ON `basic_metadata` (`subject_uuid`);"),
             ("basic_metadata_predicate_idx", "CREATE INDEX IF NOT EXISTS `basic_metadata_predicate_idx` ON `basic_metadata` (`predicate`);")
@@ -103,7 +103,8 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
             "CREATE TABLE IF NOT EXISTS `node_meta` (\
             `inode` INTEGER PRIMARY KEY ASC,\
             `main_parent` INTEGER NOT NULL,\
-            `obj_uuid` CHAR(36),\
+            `file_size` INTEGER NOT NULL DEFAULT 0,\
+            `obj_uuid` CHAR(36) NOT NULL,\
             `obj_type` VARCHAR(20),\
             `file_type` VARCHAR(1),\
             `mtime` INTEGER DEFAULT (strftime('%s','now')) NOT NULL,\
@@ -125,7 +126,7 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
     v1_schema.push(SchemaItem{
         table: ("node_names", "CREATE TABLE IF NOT EXISTS `node_name` (\
             `inode` INTEGER NOT NULL,\
-            `parent` INTEGER, /* parent can be null on purpose, it may help with bundle structure */\
+            `parent` INTEGER NOT NULL,\
             `hidden` BOOLEAN DEFAULT 0 NOT NULL,\
             `name` VARCHAR(250) NOT NULL\
         )"),
@@ -144,6 +145,7 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
             `node_meta`.`obj_uuid` AS `obj_uuid`,\
             `node_meta`.`obj_type` AS `obj_type`,\
             `node_meta`.`file_type` AS `file_type`,\
+            `node_meta`.`file_size` AS `file_size`,\
             `node_meta`.`mtime` AS `mtime`,\
             `node_meta`.`ctime` AS `ctime`,\
             `node_meta`.`crtime` AS `crtime`,\
@@ -164,6 +166,7 @@ fn schema_upgrade_to_v1(conn: &Connection) -> SQLResult<()> {
             `node_meta`.`obj_uuid` AS `obj_uuid`,\
             `node_meta`.`obj_type` AS `obj_type`,\
             `node_meta`.`file_type` AS `file_type`,\
+            `node_meta`.`file_size` AS `file_size`,\
             `node_meta`.`mtime` AS `mtime`,\
             `node_meta`.`ctime` AS `ctime`,\
             `node_meta`.`crtime` AS `crtime`,\

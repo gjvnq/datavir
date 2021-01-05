@@ -1,21 +1,23 @@
-use fuser::ReplyOpen;
-use std::collections::HashMap;
-use crate::inode_record::NodeNameIter;
 use crate::inode_record::NodeName;
+use crate::inode_record::NodeNameIter;
 use crate::inode_record::NodeRecord;
 use crate::inode_record::INODE_MIN;
 use crate::open_database;
 use crate::prelude::*;
 use core::sync::atomic::AtomicU64;
 use core::time::Duration;
+use fuser::ReplyOpen;
+use fuser::TimeOrNow;
 #[allow(unused_imports)]
+use fuser::{FileAttr, FileType, Filesystem, MountOption, Request};
 use fuser::{
-    FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
-    Request,
+    ReplyAttr, ReplyBmap, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEmpty, ReplyEntry,
+    ReplyIoctl, ReplyLock, ReplyLseek, ReplyStatfs, ReplyWrite, ReplyXattr,
 };
-use libc::ENOENT;
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::marker::PhantomData;
+use std::time::SystemTime;
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -131,7 +133,9 @@ impl<'fs> DataVirFS<'fs> {
     }
 
     fn new_tx<'tx: 'fs>(&mut self) -> Transaction<'tx> {
-        fuck_mut(&mut self.conn).transaction().unwrap()
+        let mut tx = fuck_mut(&mut self.conn).transaction().unwrap();
+        tx.set_drop_behavior(rusqlite::DropBehavior::Rollback);
+        tx
     }
 }
 
@@ -147,6 +151,7 @@ fn fmt_request(req: &Request) -> String {
 
 impl<'fs> Filesystem for DataVirFS<'fs> {
     #[allow(unused_variables)]
+    /// Look up a directory entry by name and get its attributes.
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let trace_msg = format!(
             "DataVirFS::lookup(_req={}, parent={}, name={:?})",
@@ -166,12 +171,16 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
         let tx = self.new_tx();
         match NodeRecord::lookup(parent, name, &tx) {
             Ok(node) => {
-                let attrs = node.to_file_attr(0);
+                let attrs = node.to_file_attr();
                 trace!("-{} -> Ok", trace_msg);
                 reply.entry(&self.basic_ttl, &attrs, 0);
-            },
+            }
             Err(err) => {
-                error!("Failed to lookup node ({}, {:?}): {:?}", parent, name, err);
+                if err.is_not_found() {
+                    warn!("Failed to lookup node ({}, {:?}): {:?}", parent, name, err);
+                } else {
+                    error!("Failed to lookup node ({}, {:?}): {:?}", parent, name, err);
+                }
                 trace!("-{} -> {:?}", trace_msg, err);
                 reply.error(i32::from(err));
             }
@@ -179,6 +188,7 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
     }
 
     #[allow(unused_variables)]
+    /// Get file attributes.
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         let trace_msg = format!(
             "DataVirFS::getattr(_req={}, ino={})",
@@ -196,34 +206,15 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
                 return;
             }
         };
-        let attrs = node.to_file_attr(0);
+        let attrs = node.to_file_attr();
         reply.attr(&self.basic_ttl, &attrs);
         trace!("-{} -> {:?}", trace_msg, attrs);
     }
 
     #[allow(unused_variables)]
-    fn read(
-        &mut self,
-        _req: &Request,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
-        _size: u32,
-        _flags: i32,
-        _lock: Option<u64>,
-        reply: ReplyData,
-    ) {
-        reply.error(ENOENT);
-    }
-
-    #[allow(unused_variables)]
     #[allow(unused_mut)]
-    fn opendir(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
-        flags: i32,
-        reply: ReplyOpen) {
+    /// Open a directory. Filesystem may store an arbitrary file handle (pointer, index, etc) in fh, and use this in other all other directory stream operations (readdir, releasedir, fsyncdir). Filesystem may also implement stateless directory I/O and not store anything in fh, though that makes it impossible to implement standard conforming directory stream operations in case the contents of the directory can change between opendir and releasedir.
+    fn opendir(&mut self, _req: &Request<'_>, ino: u64, flags: i32, reply: ReplyOpen) {
         // TODO: see what to do with the flags
         let trace_msg = format!(
             "DataVirFS::opendir(_req={}, ino={}, flags={})",
@@ -248,17 +239,17 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
             reply.error(POSIX_NOT_A_DIRECTORY);
             return;
         }
+
+        // TODO: use fh to store the transaction object and the iterator (this will proabbly increase performance and consistency)
         let fh = 0;
         let reply_flags = 0;
         reply.opened(fh, reply_flags);
-
-        // TODO: use fh to store the transaction object and the iterator (this will proabbly increase performance and consistency)
-
-        trace!("-{}", trace_msg);
+        trace!("-{} -> Ok", trace_msg);
     }
 
     #[allow(unused_variables)]
     #[allow(unused_mut)]
+    /// Read directory. Send a buffer filled using buffer.fill(), with size not exceeding the requested size. Send an empty buffer on end of stream. fh will contain the value set by the opendir method, or will be undefined if the opendir method didn't set any value.
     fn readdir(
         &mut self,
         _req: &Request,
@@ -277,7 +268,7 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
         let mut offset = offset;
 
         if offset == 0 {
-            let full = reply.add(ino, offset+1, FileType::Directory, ".");
+            let full = reply.add(ino, offset + 1, FileType::Directory, ".");
             debug!("Add '.' for {}", ino);
             if full {
                 reply.ok();
@@ -297,7 +288,7 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
                     return;
                 }
             };
-            let full = reply.add(parent, offset+1, FileType::Directory, "..");
+            let full = reply.add(parent, offset + 1, FileType::Directory, "..");
             debug!("Add '..' for {}", ino);
             if full {
                 reply.ok();
@@ -308,8 +299,8 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
             }
         }
 
-        let list = NodeName::list(ino, false, Some(offset-2), &tx);
-        
+        let list = NodeName::list(ino, false, Some(offset - 2), &tx);
+
         if let Err(err) = list {
             trace!("-{} -> {:?}", trace_msg, err);
             reply.error(i32::from(err));
@@ -320,7 +311,7 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
             // The unwrap is safe because the nodes came right form the database
             if reply.add(
                 node.get_inode(),
-                offset+1,
+                offset + 1,
                 node.get_file_type().unwrap(),
                 node.get_name(),
             ) {
@@ -328,6 +319,7 @@ impl<'fs> Filesystem for DataVirFS<'fs> {
             }
             debug!("{:?}", node);
         }
+
         reply.ok();
         trace!("-{} -> OK", trace_msg);
         info!("Replied dir");
