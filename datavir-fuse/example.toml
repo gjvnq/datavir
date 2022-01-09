@@ -1,0 +1,8 @@
+[log]
+backend = "stdout"
+level = "trace"
+
+[audit]
+log_read = true
+log_writes = true
+resolve_pid = true #if true, will get the process name that made the call. If false, will inclue only the pid

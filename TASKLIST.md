@@ -1,0 +1,1 @@
+[ ] Create Volumes when new folders are added to the 'All Volumes' special folder
