@@ -1,4 +1,12 @@
+
+
+#[macro_use]
 mod prelude;
+mod files;
+mod schema;
+mod core;
+mod utils;
+// mod fuse_adapter;
 
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -6,6 +14,7 @@ use clap::{app_from_crate, Arg};
 #[allow(unused_imports)]
 use fern::colors::{Color, ColoredLevelConfig};
 
+use crate::core::DataVirFS;
 
 fn setup_logging(verbosity: u64) -> Result<(), fern::InitError> {
     let colors = ColoredLevelConfig::new()
@@ -32,8 +41,8 @@ fn setup_logging(verbosity: u64) -> Result<(), fern::InitError> {
         .level(file_level)
         .format(move |out, message, record| {
             let mut module_or_target = record.module_path().unwrap_or(record.target());
-            if module_or_target.starts_with("datavir_fuse::") {
-                module_or_target = "datavir_fuse"
+            if module_or_target.starts_with(DATAVIR_PKG_PREIX) {
+                module_or_target = DATAVIR_PKG_NAME
             }
             // TODO: better way to decide what to show in the file path
             let file = record.file().unwrap_or("?");
@@ -58,12 +67,12 @@ fn setup_logging(verbosity: u64) -> Result<(), fern::InitError> {
         .level(stdout_level)
         .format(move |out, message, record| {
             let mut module_or_target = record.module_path().unwrap_or(record.target());
-            if module_or_target.starts_with("datavir_fuse::") {
-                module_or_target = "datavir_fuse"
+            if module_or_target.starts_with(DATAVIR_PKG_PREIX) {
+                module_or_target = DATAVIR_PKG_NAME
             }
-            if module_or_target == "datavir_fuse" {
+            if module_or_target == DATAVIR_PKG_NAME {
                 out.finish(format_args!(
-                    "[{date}][{level: <5}][{file}:{line: >4}] {message}",
+                    "[{date}][{level: <5}][{file}:{line: <4}] {message}",
                     date = chrono::Local::now().format("%H:%M"),
                     level = colors.color(record.level()),
                     file = record.file().unwrap_or("?"),
@@ -99,20 +108,46 @@ fn real_main() -> i32 {
                 .multiple_occurrences(true)
                 .help("Increases logging verbosity each use for up to 4 times"),
         )
+        .arg(
+            Arg::new("DATA_DIR")
+                .help("Sets the the directory that will hold the actual data")
+                .required(true)
+                .index(1),
+        )
         .get_matches();
 
     // Setup and test logger
     let verbosity: u64 = cmd_arguments.occurrences_of("verbose");
     setup_logging(verbosity).expect("failed to initialize log");
-    info!("DataVir v{} starting up!", DATAVIT_VERSION);
+    info!("DataVir v{} starting up!", DATAVIR_VERSION);
     warn!("WARN  output enabled.");
     debug!("DEBUG output enabled.");
     trace!("TRACE output enabled.");
+
+    trace!("{}", function!());
+
+    // Get data dir
+    let data_dir: &str = cmd_arguments.value_of("DATA_DIR").unwrap();
+    debug!("DATA_DIR = {:?}", data_dir);
+    let data_dir = Path::new(data_dir);
+
+    // Make FS
+    let _fs = match DataVirFS::new(data_dir) {
+        Ok(v) => v,
+        Err(_) => return 1,
+    };
 
     println!("hi!");
     0
 }
 
+fn init_stuff() {
+    unsafe {
+        init_uuid_context();
+    }
+}
+
 fn main() {
+    init_stuff();
     std::process::exit(real_main());
 }

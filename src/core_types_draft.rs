@@ -30,7 +30,14 @@ pub struct FileStream {
     modified: DateTime<Utc>,
     size: u64, // for virtual filestreams, this is just an estimate
     generator: Option<Uuid>, // if none, then it is a real file
-    flag_immutable: bool
+    flag_immutable: bool,
+    compression: Option<CompressionAlg>
+}
+
+#[derive(Debug)]
+pub enum CompressionAlg {
+    Gzip,
+    Xz,
 }
 
 impl FileStream {
@@ -48,7 +55,7 @@ impl FileStream {
 #[derive(Debug)]
 pub enum FileContent {
     Nothing,
-    ShortData(Vec<u8>), // only up to 4k
+    ShortData(Vec<u8>), // only up to 2k
     Stream(Uuid, bool), // bool is for copy on write
     SymLink(String),
     // No idea how I'm going to implement the things below
@@ -59,18 +66,30 @@ pub enum FileContent {
 }
 
 #[derive(Debug)]
-pub struct FileNode {
+pub struct BasicFileNode {
     id: Uuid,
-    name: String,
-    title: String,
-    mime_type: String, // I put the mime here because some files can have more than one valid mime, see: https://ctan.org/pkg/pdbf-toolkit
-    created: DateTime<Utc>,
-    modified: DateTime<Utc>,
     content: FileContent,
     uperm: UnixPermission,
-    hidden: bool,
-    copy_on_write: bool,
-    parents: Vec<Uuid>
+    created: DateTime<Utc>,
+    modified: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+pub struct RichFileNode {
+    id: Uuid,
+    content: FileContent,
+    uperm: UnixPermission,
+    metadata: HashMap<String, FileContent>,
+    created: DateTime<Utc>,
+    modified: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+pub struct FileHandle {
+    path: Vec<Uuid>,
+    // The
+    name: String,
+    node: FileNode,
 }
 
 #[derive(Debug)]
@@ -80,13 +99,6 @@ pub struct UnixPermission {
     gid: u16,
     uname: String,
     gname: String
-}
-
-#[derive(Debug)]
-pub struct FileHandle {
-    path: Vec<Uuid>,
-    node: FileNode,
-    stream: FileNode,
 }
 
 #[derive(Debug)]
@@ -104,6 +116,7 @@ pub enum MetadataValue {
     Set(HashSet<MetadataValue>),
     Map(HashMap<String, MetadataValue>),
     Binary(Vec<u8>),
+    MagicValue(Uuid),
     Stream(Uuid),
     StreamSegment(Uuid, u64, u64)
 }
