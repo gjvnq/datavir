@@ -53,6 +53,8 @@ volumeInfo = {
 	title: tstr
 	name: tstr
 	isReal: bool
+	uid2name: { * uint16 => tstr }
+	gid2name: { * uint16 => tstr }
 }
 ```
 
@@ -61,7 +63,7 @@ volumeInfo = {
 ```cddl
 nodeInfoReq = {
 	msgType: "nodeInfoReq"
-	nodeOrPath: uuid / tstr
+	nodesOrPaths: [ * uuid / tstr ]
 	volume: uuid ?
 }
 ```
@@ -69,7 +71,8 @@ nodeInfoReq = {
 ```cddl
 nodeInfoRpl = {
 	msgType: "nodeInfoRpl"
-	node: nodeInfo
+	nodes: [ * nodeInfo / error ]
+	paths2uuid: { * tstr => uuid }
 }
 ```
 
@@ -78,15 +81,53 @@ nodeInfo = {
 	uuid: uuid
 	name: tstr
 	title: tstr
+	description: tstr
 	parents: [* uuid]
 	content: contentRef
+	thumbnail: bstr ?
+	unixPerm: unixPerm ?
 	xattrs: {* tstr => xattrVal}
 	created: time
 	changed: time
+	volume: uuid
+	inTrash: bool
+	trashedBy: uuid ?
+	trashedWhen: time ?
+}
+
+unixPerm = {
+	mode: uint16
+	uid: uint16
+	gid: uint16
+}
+
+contentRef = {
+	file-kind: "empty" / "regular" / "symbolic-link" / "hard-link" / "socket"
+	copyOnWrite: bool
+	stream: uuid
 }
 
 xattrVal = {
 	format: tstr,
 	value: bstr
+}
+```
+
+#### Streams
+
+```cddl
+streamHashReq = {
+	msgType: "streamHashReq"
+	alg: hashAlg
+	nodesOrPaths: [ * uuid / tstr ]
+	volume: uuid ?
+}
+```
+
+```cddl
+streamHashRpl = {
+	alg: hashAlg
+	values: { * uuid => bstr }
+	paths2uuid: { * tstr => uuid }
 }
 ```
