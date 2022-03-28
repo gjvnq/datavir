@@ -25,4 +25,13 @@ CREATE TABLE `filenode` (
 
 INSERT INTO `filenode` (`inode_num`, `node_uuid`, `parent_uuid`, `filename`, `contents`, `super_hidden`, `changed_at`, `created_at`) VALUES (1, 'd0e79d76-720c-4c8f-8986-02bb52e2d4e0', 'd0e79d76-720c-4c8f-8986-02bb52e2d4e0', '', NULL, 0, strftime('%s', 'now'), strftime('%s', 'now'));
 
+CREATE TABLE `crtd` (
+	`crtd_uuid` NOT NULL UNIQUE,
+	`operation` NOT NULL, # e.g. move, delete, write, ...
+	`data` NOT NULL, # the JSON data of the CRTD
+	`requested_at` NOT NULL
+);
+
+-- What if I use OrbitDB for everything?
+
 COMMIT;

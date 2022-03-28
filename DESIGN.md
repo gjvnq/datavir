@@ -22,17 +22,19 @@
 
 **Generator** — A “script-like” thing that automatically populates file streams and file nodes. Mainly used for filtering by metadata and for transparernt decompression.
 
+**Bundle** — A small collection of files that behaves as a "single thing". For example: a 3D model with sidecar files for texturing.
+
 ## FilePath syntax
 
 Both filenames and metadata entry names are UTF-8 strings in the NFC (Normalization Form C, i.e. composition) that:
 
-  * Don't begin nor end with ```!```, ```@```, ```#```, ```$```, ```%```, ```&```, ```:``` or ```~```.
-  * Don't being with ```._```.
+  * Don't start nor end with ```!```, ```@```, ```#```, ```$```, ```%```, ```&```, ```:``` or ```~```.
+  * Don't start with ```._```.
   * Don't include the forward slash ```/``` (U+002F SOLIDUS) anywhere.
-  * Don't include two consecutives dots ```..``` (U+002E FULL STOP * 2) anywhere.
-  * Don't have trailing white spaces (including the U+1680 OGHAM SPACE MARK ``` ```) either in the begning or end.
+  * Don't start two consecutives dots ```..``` (U+002E FULL STOP * 2) anywhere.
+  * Don't have trailing white spaces (including the U+1680 OGHAM SPACE MARK ``` ```) either in the start or end.
 
-Additionally filenames are limited to 4096 bytes including the final null.
+Additionally filenames are limited to 4096 bytes including the final NULL.
 
 Filenames begning with ```@``` usually refer to a generator about the directory itself. So ```folder/@folder.tar.gz``` is a compressed archive of ```folder``` in the ```.tar.gz``` format.
 
@@ -44,7 +46,7 @@ Filenode metadata and filestream metadata map to extended attributes begining in
 
 ## Sync
 
-There are two variants of peers: full peers and dumb peers. The former can access encrypted data while the latter cannot for they lack the encryption keys. Both variants can sync with each other.
+There are two variants of peers: full peers and dumb peers. The former can access encrypted data while the latter cannot for they lack the encryption keys. Both variants can sync with any peer.
 
 ## Storage Pools
 
