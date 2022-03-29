@@ -47,6 +47,21 @@ listVolumesRpl = {
 }
 ```
 
+
+```cddl
+newVolumeReq = {
+	msgType: "newVolumeReq"
+	volume: volumeInfo
+}
+```
+
+```cddl
+newVolumeRpl = {
+	msgType: "newVolumeRpl"
+	status: tstr // ?
+}
+```
+
 ```cddl
 volumeInfo = {
 	uuid: uuid

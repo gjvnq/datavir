@@ -199,3 +199,102 @@ macro_rules! function {
         }
     }};
 }
+
+
+pub fn default_logging_setup(verbosity: u64, log_filepath: &str) -> Result<(), fern::InitError> {
+    use fern::colors::{Color, ColoredLevelConfig};
+
+    let colors = ColoredLevelConfig::new()
+        .debug(Color::Magenta)
+        .trace(Color::BrightBlack);
+
+    let base_config = fern::Dispatch::new();
+    let stdout_level = match verbosity {
+        0 => log::LevelFilter::Error,
+        1 => log::LevelFilter::Warn,
+        2 => log::LevelFilter::Info,
+        3 => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Trace,
+    };
+    let file_level = match verbosity {
+        0 => log::LevelFilter::Info,
+        1 => log::LevelFilter::Info,
+        2 => log::LevelFilter::Info,
+        3 => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Trace,
+    };
+
+    let file_config = fern::Dispatch::new()
+        .level(file_level)
+        .format(move |out, message, record| {
+            let mut module_or_target = record.module_path().unwrap_or(record.target());
+            if module_or_target.starts_with(DATAVIR_PKG_PREIX) {
+                module_or_target = DATAVIR_PKG_NAME
+            }
+            
+            // TODO: better way to decide what to show in the file path
+            let file = record.file().unwrap_or("?");
+            let file = match file.len() {
+                n if n > 20 => &file[file.len() - 20..],
+                _ => &file,
+            };
+
+            out.finish(format_args!(
+                "{color_code}{date}[{level: <5}][{target}][{file}:{line: <4}] {message}\x1B[0m",
+                color_code = format_args!(
+                    "\x1B[{}m",
+                    colors.get_color(&record.level()).to_fg_str()),
+                date = chrono::Utc::now().format("[%+]"), // %+ = RFC 3339 date & time format
+                file = file,
+                line = record.line().unwrap_or(0),
+                target = module_or_target,
+                level = record.level(),
+                message = message
+            ))
+        })
+        .chain(fern::log_file(log_filepath)?);
+
+    let stdout_config = fern::Dispatch::new()
+        .level(stdout_level)
+        .format(move |out, message, record| {
+            let module_or_target = record.module_path().unwrap_or(record.target());
+            let mut show_code_location = false;
+
+            if module_or_target == "dv_client" {
+                show_code_location = true;
+            } else if module_or_target == "dv_full_node" {
+                show_code_location = true;
+            } else if module_or_target.starts_with(DATAVIR_PKG_PREIX) {
+                show_code_location = true;
+            }
+            
+            let code_location = match show_code_location {
+                true => {
+                    format_args!("{file}:{line: <4}",
+                        file = record.file().unwrap_or("?"),
+                        line = record.line().unwrap_or(0)).to_string()},
+                false => {
+                    format_args!("{target}",
+                        target = module_or_target).to_string()}
+            };
+
+            out.finish(format_args!(
+                "{color_code}[{date}][{level: <5}][{code_location}] {message}\x1B[0m",
+                color_code = format_args!(
+                    "\x1B[{}m",
+                    colors.get_color(&record.level()).to_fg_str()),
+                date = chrono::Local::now().format("%H:%M:%S"),
+                level = record.level(),
+                code_location = code_location,
+                message = message
+            ))
+        })
+        .chain(std::io::stdout());
+
+    base_config
+        .chain(file_config)
+        .chain(stdout_config)
+        .apply()?;
+
+    Ok(())
+}
