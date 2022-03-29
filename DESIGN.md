@@ -6,7 +6,7 @@
   * Datavir Dumb Node: a program that implements only the core features necessary for file syncing and usually has no way to decrypt the file contents.
   * Datavir Client: a program that connects to a datavir full node for using the files. This can also be an adapter for FUSE or other systems.
 
-The communication between these parts is for now done via COSE (CBOR Object Signing and Encryption) transported via HTTP or HTTPS. In the future this may change to lightweight transport protocols like CoAP (Constrained Application Protocol).
+The communication between these parts is for now done via JWT (JSON Web Token) transported via WSS (WebSockets Secure). In the future this may change to lightweight transport protocols like CoAP (Constrained Application Protocol) and COSE (CBOR Object Signing and Encryption).
 
 ## Main Ideas
 

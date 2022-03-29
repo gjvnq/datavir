@@ -1,6 +1,6 @@
 # DataVir Messages
 
-All messages are sent through CWTs (COSE Web Tokens) and the following claims are mandatory:
+All messages are sent through JWTs (JSON Web Tokens) and the following claims are mandatory:
 
   * `iat`: Issued At.
   * `iss`: Issuer, in the format `{user-uuid} via {application-uuid-or-url}`, e.g. `526AAD16-3B4B-4156-BE7F-68ED5D14D529 via 4B3232A2-7DAB-4FE9-A40A-717FF7FF50A2`, `526AAD16-3B4B-4156-BE7F-68ED5D14D529 via myapp.example.com`.
