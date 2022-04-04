@@ -1,8 +1,5 @@
-#[path="../prelude.rs"]
-mod prelude;
-
 #[allow(unused_imports)]
-use crate::prelude::*;
+use datavir::prelude::*;
 
 fn real_main() -> i32 {
     let args = clap::Command::new("dv-client")

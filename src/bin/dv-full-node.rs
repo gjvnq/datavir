@@ -1,8 +1,7 @@
-#[path="../prelude.rs"]
-mod prelude;
-
 #[allow(unused_imports)]
-use crate::prelude::*;
+use datavir::prelude::*;
+#[allow(unused_imports)]
+use datavir::ws_server::WSServer;
 
 fn real_main() -> i32 {
     let args = clap::Command::new("dv-full-node")

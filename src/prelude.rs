@@ -8,6 +8,8 @@ pub use std::path::{Path, PathBuf};
 pub use std::time::SystemTimeError;
 pub use std::collections::HashMap;
 
+pub use tokio_tungstenite::tungstenite::Error as WSError;
+
 pub use rusqlite::params;
 pub use rusqlite::Connection as SQLConnection;
 pub use rusqlite::Error as SQLError;
@@ -20,6 +22,8 @@ pub use uuid::v1::Context as UuidContext;
 
 pub use chrono::Utc;
 pub use chrono::DateTime;
+
+pub const DEFAULT_WS_ADDR: &str = "127.0.0.1:8081";
 
 static mut UUID_NODE_ID: [u8;6] = [1, 2, 3, 4, 5, 6];
 static mut UUID_CONTEXT: Option<UuidContext> = None;
@@ -70,12 +74,14 @@ pub const DATAVIR_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub enum DVError {
     SQLError(SQLError),
     IOError(IOError),
+    WSError(WSError),
     SystemTimeError(SystemTimeError),
     TimeConversionErrorFromSecs(u64),
     UuidParseError(String),
     DirNotClear(PathBuf),
     NotImplemented,
     NoMoreResults,
+    NotReady(String)
 }
 
 pub type DVResult<T> = Result<T, DVError>;
@@ -117,6 +123,18 @@ impl std::convert::From<IOError> for DVError {
 impl std::convert::From<SQLError> for DVError {
     fn from(err: SQLError) -> Self {
         DVError::SQLError(err)
+    }
+}
+
+impl std::convert::From<WSError> for DVError {
+    fn from(err: WSError) -> Self {
+        DVError::WSError(err)
+    }
+}
+
+impl<T> std::convert::From<DVError> for DVResult<T> {
+    fn from(err: DVError) -> Self {
+        Err(err)
     }
 }
 
