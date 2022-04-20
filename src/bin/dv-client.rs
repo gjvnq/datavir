@@ -1,7 +1,8 @@
 #[allow(unused_imports)]
 use datavir::prelude::*;
+use datavir::ws_client::WSClient;
 
-fn real_main() -> i32 {
+async fn real_main() -> i32 {
     let args = clap::Command::new("dv-client")
         .author(clap::crate_authors!())
         .version(clap::crate_version!())
@@ -16,7 +17,7 @@ fn real_main() -> i32 {
         .arg(
             clap::Arg::new("ADDR")
                 .help("Address of the datavir full node")
-                .required(true)
+                .default_value(DEFAULT_WS_ADDR_URL)
                 .index(1),
         )
         .get_matches();
@@ -28,12 +29,27 @@ fn real_main() -> i32 {
     warn!("WARN  output enabled.");
     debug!("DEBUG output enabled.");
     trace!("TRACE output enabled.");
+    debug!("Arg matches: {:?}", args);
 
-    println!("{:?}", args);
+    // TODO: run multiple parallel requests
+
+    let mut client = match WSClient::new(args.value_of("ADDR").expect("missing address")).await {
+        Ok(v) => v,
+        Err(err) => {
+            error!("Failed to start WSClient: {:?}", err);
+            return 1;
+        }
+    };
+    let time = client.ask_time().await;
+    info!("Got time: {:?}", time);
+    let res = client.close().await;
+    info!("Closing result: {:?}", res);
+
     0
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     unsafe {init_uuid_context();}
-    std::process::exit(real_main());
+    std::process::exit(real_main().await);
 }

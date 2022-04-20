@@ -7,6 +7,8 @@ pub use std::io::Result as IOResult;
 pub use std::path::{Path, PathBuf};
 pub use std::time::SystemTimeError;
 pub use std::collections::HashMap;
+pub use std::pin::Pin;
+pub use std::marker::PhantomPinned;
 
 pub use tokio_tungstenite::tungstenite::Error as WSError;
 
@@ -24,6 +26,7 @@ pub use chrono::Utc;
 pub use chrono::DateTime;
 
 pub const DEFAULT_WS_ADDR: &str = "127.0.0.1:8081";
+pub const DEFAULT_WS_ADDR_URL: &str = "ws://127.0.0.1:8081";
 
 static mut UUID_NODE_ID: [u8;6] = [1, 2, 3, 4, 5, 6];
 static mut UUID_CONTEXT: Option<UuidContext> = None;

@@ -1,5 +1,6 @@
-#[allow(unused_imports)]
+#![allow(unused_imports)]
 use crate::prelude::*;
+use tokio_tungstenite::tungstenite::Message;
 use tokio::net::{TcpListener, TcpStream};
 use futures_util::{future, StreamExt, TryStreamExt};
 
@@ -74,9 +75,10 @@ async fn accept_connection(stream: TcpStream) {
     info!("New WebSocket connection: {}", addr);
 
     let (write, read) = ws_stream.split();
+
     // We should not forward messages other than text or binary.
-    read.try_filter(|msg| future::ready(msg.is_text() || msg.is_binary()))
-        .forward(write)
+    read.try_filter(|msg| future::ready(msg.eq(&Message::Text("ask_time".to_string()))))
+    	.forward(write)
         .await
         .expect("Failed to forward messages")
 }

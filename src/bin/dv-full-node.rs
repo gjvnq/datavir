@@ -1,9 +1,8 @@
 #[allow(unused_imports)]
 use datavir::prelude::*;
-#[allow(unused_imports)]
 use datavir::ws_server::WSServer;
 
-fn real_main() -> i32 {
+async fn real_main() -> i32 {
     let args = clap::Command::new("dv-full-node")
         .author(clap::crate_authors!())
         .version(clap::crate_version!())
@@ -18,7 +17,7 @@ fn real_main() -> i32 {
         .arg(
             clap::Arg::new("ADDR")
                 .help("Address in which to listen for connections")
-                .required(true)
+                .default_value(DEFAULT_WS_ADDR)
                 .index(1),
         )
         .get_matches();
@@ -30,12 +29,21 @@ fn real_main() -> i32 {
     warn!("WARN  output enabled.");
     debug!("DEBUG output enabled.");
     trace!("TRACE output enabled.");
+    debug!("Arg matches: {:?}", args);
 
-    println!("{:?}", args);
+    let mut server = WSServer::new(args.value_of("ADDR").expect("missing address"));
+    if let Err(_err) = server.prepare().await {
+        return 1;
+    }
+    if let Err(_err) = server.main_loop().await {
+        return 2;
+    }
+
     0
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     unsafe {init_uuid_context();}
-    std::process::exit(real_main());
+    std::process::exit(real_main().await);
 }
