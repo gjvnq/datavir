@@ -33,15 +33,22 @@ async fn real_main() -> i32 {
 
     // TODO: run multiple parallel requests
 
-    let mut client = match WSClient::new(args.value_of("ADDR").expect("missing address")).await {
+    let client = match WSClient::new(args.value_of("ADDR").expect("missing address")).await {
         Ok(v) => v,
         Err(err) => {
             error!("Failed to start WSClient: {:?}", err);
             return 1;
         }
     };
-    let time = client.ask_time().await;
-    info!("Got time: {:?}", time);
+    {
+        let time1 = client.ask_time();
+        let time2 = client.ask_time();
+        let time3 = client.ask_time();
+        info!("Got time: {:?}", time3.await);
+        info!("Got time: {:?}", time1.await);
+        info!("Got time: {:?}", time2.await);
+    }
+
     let res = client.close().await;
     info!("Closing result: {:?}", res);
 

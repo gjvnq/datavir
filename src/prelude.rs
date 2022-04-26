@@ -9,8 +9,11 @@ pub use std::time::SystemTimeError;
 pub use std::collections::HashMap;
 pub use std::pin::Pin;
 pub use std::marker::PhantomPinned;
+pub use std::sync::{Arc, Mutex};
+pub use std::sync::mpsc::channel;
 
 pub use tokio_tungstenite::tungstenite::Error as WSError;
+pub use futures_util::{StreamExt, SinkExt};
 
 pub use rusqlite::params;
 pub use rusqlite::Connection as SQLConnection;

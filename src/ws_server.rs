@@ -74,11 +74,24 @@ async fn accept_connection(stream: TcpStream) {
 
     info!("New WebSocket connection: {}", addr);
 
-    let (write, read) = ws_stream.split();
+    let (mut write, mut read) = ws_stream.split();
 
-    // We should not forward messages other than text or binary.
-    read.try_filter(|msg| future::ready(msg.eq(&Message::Text("ask_time".to_string()))))
-    	.forward(write)
-        .await
-        .expect("Failed to forward messages")
+    while let Some(msg) = read.next().await {
+        info!("Got: {:?}", msg);
+        let msg = msg.expect("I don't like dealing with errors");
+        if msg.is_close() {
+        	break
+        } else if msg == Message::Text("get_time".to_string()) {
+        	let now = Utc::now().to_rfc3339();
+        	write.send(Message::Text(now)).await.expect("Don't fail me");
+        } else {
+        	write.send(Message::Text("I don't get it".to_string())).await.expect("Don't fail me");
+        }
+    }
+
+    // // We should not forward messages other than text or binary.
+    // read.try_filter(|msg| future::ready(msg.eq(&Message::Text("ask_time".to_string()))))
+    // 	.forward(write)
+    //     .await
+    //     .expect("Failed to forward messages")
 }

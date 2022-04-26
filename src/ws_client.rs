@@ -1,5 +1,4 @@
 #[allow(unused_imports)]
-use futures_util::SinkExt;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::connect_async;
 use tokio::net::TcpStream;
@@ -9,8 +8,8 @@ use crate::prelude::*;
 #[derive(Debug)]
 pub struct WSClient {
 	addr: String,
-	ops: i32,
-	ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+	// queue: 
+	ws_stream: Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpStream>>>>,
 	_marker: PhantomPinned,
 }
 
@@ -23,11 +22,7 @@ impl WSClient {
 	pub async fn new(addr: &str) -> DVResult<WSClient> {
 		let url = url::Url::parse(addr).unwrap();
 		let (ws_stream, _) = match connect_async(url).await {
-			Ok((ws_stream, response)) => {
-				debug!("ws_stream = {:?}", ws_stream);
-				debug!("response = {:?}", response);
-				(ws_stream, response)
-			},
+			Ok(v) => v,
 			Err(err) => {
 				error!("Failed to connect to {}: {}", addr, err);
 				return Err(err)?
@@ -36,20 +31,34 @@ impl WSClient {
 
 		Ok(WSClient{
 			addr: addr.to_string(),
-			ops: 0,
-			ws_stream: ws_stream,
+			ws_stream: Arc::new(Mutex::new(ws_stream)),
 			_marker: PhantomPinned,
 		})
 	}
 
-	pub async fn ask_time(&mut self) -> DVResult<String> {
-		self.ops += 1;
-		info!("ops = {}", self.ops);
-		self.ws_stream.send(Message::Text("get_time".to_string())).await?;
-		Ok("err".to_string())
+	pub async fn ask_time(&self) -> DVResult<String> {
+		// 1. Make message
+		let msg = Message::Text("get_time".to_string());
+		// 2. Make return queue
+
+		// 3. Send message
+
+		// 4. Wait for return value
+		let ans : Option<Result<Message,tokio_tungstenite::tungstenite::Error>>;
+		{
+			let mut ws_stream = self.ws_stream.lock().unwrap();
+			ws_stream.send(msg).await?;
+			ans = ws_stream.next().await;
+		}
+		let ans = match ans {
+			Some(v) => v?,
+			None => return Err(DVError::NoMoreResults)
+		};
+
+		Ok(ans.to_string())
 	}
 
-	pub async fn close(mut self) -> DVResult<()> {
+	pub async fn close(self) -> DVResult<()> {
 		use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 		use tokio_tungstenite::tungstenite::protocol::frame::CloseFrame;
 		use std::borrow::Cow;
@@ -57,7 +66,10 @@ impl WSClient {
 			code: CloseCode::Normal,
 			reason: Cow::Owned("Good bye!".to_string()),
 		};
-		self.ws_stream.close(Some(close_frame)).await?;
+		{
+			let mut ws_stream = self.ws_stream.lock().unwrap();
+			ws_stream.close(Some(close_frame)).await?;
+		}
 		Ok(())
 	}
 }
