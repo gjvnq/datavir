@@ -1,7 +1,6 @@
 #[allow(unused_imports)]
 use datavir::prelude::*;
 use datavir::ws_client::WSClient;
-use std::thread;
 
 async fn real_main() -> i32 {
     let args = clap::Command::new("dv-client")
@@ -34,19 +33,13 @@ async fn real_main() -> i32 {
 
     // TODO: run multiple parallel requests
 
-    let mut client = match WSClient::new(args.value_of("ADDR").expect("missing address")).await {
+    let client = match WSClient::new(args.value_of("ADDR").expect("missing address")).await {
         Ok(v) => v,
         Err(err) => {
             error!("Failed to start WSClient: {:?}", err);
             return 1;
         }
     };
-
-
-    // futures::spawn(client.main_loop().await);
-    thread::spawn(async {
-        client.main_loop().await;
-    });
 
     {
         let time1 = client.ask_time();
@@ -56,6 +49,8 @@ async fn real_main() -> i32 {
         info!("Got time: {:?}", time1.await);
         info!("Got time: {:?}", time2.await);
     }
+
+    client.close().await.expect("Failed to close WSClient");
 
     0
 }

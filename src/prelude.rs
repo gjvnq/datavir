@@ -95,6 +95,9 @@ pub enum DVError {
 
 pub type DVResult<T> = Result<T, DVError>;
 
+// unsafe impl Send for DVError {}
+// unsafe impl Sync for DVError {}
+
 impl DVError {
     #[allow(dead_code)]
     pub fn is_not_found(&self) -> bool {
