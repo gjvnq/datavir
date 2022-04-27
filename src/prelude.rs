@@ -10,7 +10,7 @@ pub use std::collections::HashMap;
 pub use std::pin::Pin;
 pub use std::marker::PhantomPinned;
 pub use std::sync::{Arc, Mutex};
-pub use std::sync::mpsc::channel;
+pub use std::sync::mpsc;
 
 pub use tokio_tungstenite::tungstenite::Error as WSError;
 pub use futures_util::{StreamExt, SinkExt};
@@ -85,6 +85,9 @@ pub enum DVError {
     TimeConversionErrorFromSecs(u64),
     UuidParseError(String),
     DirNotClear(PathBuf),
+    MpscRecvError(mpsc::RecvError),
+    MpscSendError(String),
+    InvalidUrl(String),
     NotImplemented,
     NoMoreResults,
     NotReady(String)
@@ -135,6 +138,18 @@ impl std::convert::From<SQLError> for DVError {
 impl std::convert::From<WSError> for DVError {
     fn from(err: WSError) -> Self {
         DVError::WSError(err)
+    }
+}
+
+impl std::convert::From<mpsc::RecvError> for DVError {
+    fn from(err: mpsc::RecvError) -> Self {
+        DVError::MpscRecvError(err)
+    }
+}
+
+impl<T> std::convert::From<mpsc::SendError<T>> for DVError {
+    fn from(err: mpsc::SendError<T>) -> Self {
+        DVError::MpscSendError(format!("{:?}", err))
     }
 }
 
