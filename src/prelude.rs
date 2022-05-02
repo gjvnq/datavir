@@ -12,7 +12,8 @@ pub use std::marker::PhantomPinned;
 pub use std::sync::{Arc, Mutex};
 pub use std::sync::mpsc;
 
-pub use tokio_tungstenite::tungstenite::Error as WSError;
+pub use tokio_tungstenite::tungstenite::Message as RawWsMessage;
+pub use tokio_tungstenite::tungstenite::Error as RawWsError;
 pub use futures_util::{StreamExt, SinkExt};
 
 pub use rusqlite::params;
@@ -80,7 +81,7 @@ pub const DATAVIR_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub enum DVError {
     SQLError(SQLError),
     IOError(IOError),
-    WSError(WSError),
+    RawWsError(RawWsError),
     SystemTimeError(SystemTimeError),
     TimeConversionErrorFromSecs(u64),
     UuidParseError(String),
@@ -138,9 +139,9 @@ impl std::convert::From<SQLError> for DVError {
     }
 }
 
-impl std::convert::From<WSError> for DVError {
-    fn from(err: WSError) -> Self {
-        DVError::WSError(err)
+impl std::convert::From<RawWsError> for DVError {
+    fn from(err: RawWsError) -> Self {
+        DVError::RawWsError(err)
     }
 }
 

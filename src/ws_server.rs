@@ -81,7 +81,7 @@ async fn accept_connection(stream: TcpStream) {
         let msg = msg.expect("I don't like dealing with errors");
         if msg.is_close() {
         	break
-        } else if msg == Message::Text("get_time".to_string()) {
+        } else if msg == Message::Text("get_time".to_string()) || msg == Message::Binary("get_time".as_bytes().to_vec()) {
         	let now = Utc::now().to_rfc3339();
         	write.send(Message::Text(now)).await.expect("Don't fail me");
         } else {
