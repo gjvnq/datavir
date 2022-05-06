@@ -1,5 +1,6 @@
-# datavir
-Document organizer
+# DataVir
+
+A pluggable and distributed meta-filesystem with a document management system.
 
 ## Road map
 
@@ -10,10 +11,11 @@ Document organizer
   * [ ] **v1**: Volume merge (precursor to sync).
   * [ ] **v2**: Permissions.
 
-## Planned Generators
+## Planned Generators/Filters
 
+  * [ ] Exif extraction
   * [ ] Zip decoder
   * [ ] Tar decoder
   * [ ] ISO decoder
-  * [ ] Image metadta removal
+  * [ ] Image metadata removal
   * [ ] XMP extractor (specially for PDFs)
