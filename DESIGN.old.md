@@ -28,7 +28,7 @@
 
 Both filenames and metadata entry names are UTF-8 strings in the NFC (Normalization Form C, i.e. composition) that:
 
-  * Don't start nor end with ```!```, ```@```, ```#```, ```$```, ```%```, ```&```, ```:``` or ```~```.
+  * Don't start nor end with ```!```, ```@```, ```#```, ```$```, ```%```, ```&```, ```:```, ```~``` or ```-```.
   * Don't start with ```._```.
   * Don't include the forward slash ```/``` (U+002F SOLIDUS) anywhere.
   * Don't start two consecutives dots ```..``` (U+002E FULL STOP * 2) anywhere.
@@ -36,9 +36,23 @@ Both filenames and metadata entry names are UTF-8 strings in the NFC (Normalizat
 
 Additionally filenames are limited to 4096 bytes including the final NULL.
 
-Filenames begning with ```@``` usually refer to a generator about the directory itself. So ```folder/@folder.tar.gz``` is a compressed archive of ```folder``` in the ```.tar.gz``` format.
+Filenames begning with ```@``` usually refer to a generator about the file or directory itself. So ```folder/@folder.tar.gz``` is a compressed archive of ```folder``` in the ```.tar.gz``` format.
 
 Filenames begining with ```:``` are maped to extended attributes. So ```file.pdf/:source``` maps to the extended attribute ```user.source```.
+
+Filenames of the begining with ```:``` are special and refer to a generator or filter including dor metadata.
+Example: ```mydoc.pdf/:xattr/tags``` refers to the ```tags``` extended attribute.
+```mydoc.pdf/:metadata/title``` refers to the title attribute in the PDF metadata.
+```myimg.jpg/:metadata/geoloc.json``` refers to the geolocation info in a JSON format.
+```myimg.jpg/:no-metadata/myimg.jpg``` is a version of the original file but with the metadata stripped.
+```mytarball.tgz/:decompress/mydir/myfile``` is the ```mydir/myfile``` inside ```mytarball.tgz```.
+```mydir/:compress/mydir.tgz``` is a compressed version of the contents of ```mydir```.
+
+For compatibility with older operating system, the ```/:``` can be replaced with ```::```
+so ```mydoc.pdf/:metadata/title``` can be accessed as ```mydir/mydoc.pdf::metadata/title``` but
+````mydir/mydoc.pdf::metadata``` doesn't normally show up in directory listings.
+
+Additionally, ```mydir/.::/mydoc.pdf/:metadata/title``` also works.
 
 ## Extended Attributes
 
